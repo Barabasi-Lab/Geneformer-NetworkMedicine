@@ -686,8 +686,8 @@ class CellData(Dataset):
         
         return Chembl    
     
-def format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.pkl'), PR = False, augment = False, noise = None,
-               gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), target_label = "RA", GF_samples = 20000, save_file = None):
+def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'), PR = False, augment = False, noise = None,
+               gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), target_label = "RA", GF_samples = 20000, save_file = None, equalize = True):
     
     cols = []
     conversion = {}
@@ -696,7 +696,7 @@ def format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.
     token_dict = pk.load(open(token_dictionary, 'rb'))
     gene_dict = pk.load(open(gene_conversion, 'rb'))
     
-    '''
+    
     # Scipher data pre-processing
     if 'das28crp_cat' in data.columns:
     
@@ -723,12 +723,13 @@ def format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.
         data = data.select(keep)
     
     data = data.rename(conversion)
-    '''
     
     # Normalizes individual samples to total read count
     data = normalize_data(data, polars = True, round_data = False)
     data = data.sample(fraction = 1.0, shuffle = True)
-    data = equalize_data(data)
+    
+    if equalize == True:
+        data = equalize_data(data)
     labels = [int(i) for i in list(data[target_label])]
     data = data.sample(fraction = 1.0, shuffle = True)
      
@@ -746,7 +747,10 @@ def format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.
       data = data.sample(fraction = 1.0, shuffle = True)
 
     # Converts data to GF-applicable format
-    cell_data = CellData(train = None, test = data, label = target_label)
+    try:
+        cell_data = CellData(train = augmented_data, test = data, label = target_label)
+    except:
+        cell_data = CellData(train = None, test = data, label = target_label)
     cell_data.save_to_disk(save)
     
     with open('cellData.pk', 'wb') as f:
@@ -765,20 +769,20 @@ def format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.
             skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'RA', ROC_curve = False)
         
         # Calculates TPR and FPR for ensemble models
-        recall3, precision3, auc3 = FFN(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
-        recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
-        recall1, precision1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
+        try:
+            recall3, precision3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
+            recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
+            recall1, precision1, auc1 = RandomForest(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
+        except:
+            recall3, precision3, auc3 = FFN(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
+            recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
+            recall1, precision1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
+            
         #recall3, precision3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
         #recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
         #recall1, precision1, auc1 = RandomForest(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
         
         plt.figure(figsize=(8, 6))
-        '''
-        #plt.plot(sorted(recall1, reverse = True), sorted(precision1), color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
-        #plt.plot(sorted(recall2, reverse = True), sorted(precision2), color='green', lw=2, label=f'SVC (AUC = {round(auc2, 3)})')
-        #plt.plot(sorted(recall3, reverse = True), sorted(precision3), color = 'blue', lw=3, label = f'Feed-Forward Network (AUC = {round(auc3, 3)})')
-        #plt.plot(sorted(recall4, reverse = True), sorted(precision4), color = 'red', lw=3, label = f'GeneFormer (AUC = {round(auc4, 3)})')
-        '''
         plt.plot(recall1, precision1, color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
         plt.plot(recall2, precision2, color='green', lw=2, label=f'SVC (AUC = {round(auc2, 3)})')
         plt.plot(recall3, precision3, color = 'blue', lw=3, label = f'Feed-Forward Network (AUC = {round(auc3, 3)})')
@@ -801,9 +805,15 @@ def format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.
         fpr4, tpr4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 50, geneformer_batch_size = 12,
             skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 0, output_dir = 'RA')
             
-        fpr3, tpr3, auc3 = FFN(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
-        fpr2, tpr2, auc2 = SVC_model(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
-        fpr1, tpr1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
+        try:
+            fpr3, tpr3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False)
+            fpr2, tpr2, auc2 = SVC_model(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False)
+            fpr1, tpr1, auc1 = RandomForest(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False)
+        except:
+            fpr3, tpr3, auc3 = FFN(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
+            fpr2, tpr2, auc2 = SVC_model(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
+            fpr1, tpr1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
+            
         plt.figure(figsize=(8, 6))
         
         plt.plot(fpr1, tpr1, color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
