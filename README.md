@@ -25,5 +25,18 @@ Geneformer_classes.py contains examples on how to use the perturber and attentio
 
 Example perturber workflow:
 
+    pert = Perturber(data_subset = 0.5) # Subsets 50% of dataset 
+    pert.create_disease_outside_test(disease = 'Cardiomyopathy Hypertrophic', samples_per_label = 5,) # Calculates LCC, genes one hop away from LCC, then genes one hop away from the 1 hop genes not in the LCC, then random genes. Selects samples_per_label genes. 
+    pert.run_perturbation() # Runs perturbation filtration + analysis
+    pert.visualize_similarities() # Visualizes box plot of results
+        
 Example attention extraction workflow: 
+
+    new_attention = PPI_attention(layer_index = 4, mean = True)  # Uses either mean or maximum (if set to False) to aggregate weights
+    new_attention.scrape_attentions(samples = 1000, disease = None) # Scrapes attentions from 1000 samples. Will focus on genes from a certain disease if a disease is given (ex. Cardiomyopathy Hypertrophic). Case-insensitive
+    new_attention.map_PPI_genes() # Main analysis function for distributions, top attentions, ect. 
+    #new_attention.map_disease_genes(disease = 'Cardiomyopathy Hypertrophic')
+    new_attention.save() # Saves the gene attentions as a pickled dictionary
+    new_attention.gen_attention_PPI(attention_threshold = 0.005) # Generates PPI with the attention weights using the given threshold
+    new_attention.gen_attention_matrix(save = 'attentionMatrix.csv') # Saves the gene-gene attentions as a matrix with the given name
 
