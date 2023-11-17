@@ -6,10 +6,8 @@ Application of Geneformer for Network Medicine
 ScipherRA.py contains functionality for analyzing labelled genomic datasets with Geneformer, as well as a feed-forward regression network and Random Forest / Support Vector Machine. 
 
 The primary function for running analysis is format_sci
-Parameters:
-format_sci(data, save, token_dictionary = Path('geneformer/token_dictionary.pkl'), PR = False, augment = False, noise = None,
-               gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), target_label = "RA", GF_samples = 20000, save_file = None):
-    
+**Parameters**:
+
 * data : Path, str. The path of the data csv file
 * save_file: str, defaut None. The title of the output png/svg file for ROC/TPR curves. If set to None, will not be saved.
 * PR : bool, default False. Whether the precision/recall (True) or RoC (False) should be used
