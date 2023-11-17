@@ -5,7 +5,8 @@ Application of Geneformer for Network Medicine
 ## Geneformer drug prediction
 ScipherRA.py contains functionality for analyzing labelled genomic datasets with Geneformer, as well as a feed-forward regression network and Random Forest / Support Vector Machine. 
 
-The primary function for running analysis is format_sci
+The primary function for running analysis is format_sci.
+
 **Parameters**:
 
 * data : Path, str. The path of the data csv file
