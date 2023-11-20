@@ -5,6 +5,8 @@ from collections import deque, defaultdict
 import pickle as pk
 import polars as pl
 import community as community_louvain
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Obtains disease genes from a csv file containing disease gene mappings
 def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/GDA_Filtered_04042022.csv'), 
@@ -146,13 +148,14 @@ def compare_networks(old_PPI, new_PPI):
     
     # Obtains proportion of shared edges
     proportion_shared = shared_edges / total_edges if total_edges > 0 else 0
-    print(f'Proportion of shared edges: {shared_edge_proportion}')
+    print(f'Proportion of shared edges: {proportion_shared}')
     
-    # Obtains modularity of both
+    # Obtains modularity of both 
+    new_PPI = new_PPI.to_undirected()
     partition = community_louvain.best_partition(new_PPI)
-    old_parititon = community_louvain.best_partition(old_PPI)
+    old_partition = community_louvain.best_partition(old_PPI)
     modularity = community_louvain.modularity(partition, new_PPI)
-    old_modularity = modularity = community_louvain.modularity(old_partition, old_PPI)
+    old_modularity = community_louvain.modularity(old_partition, old_PPI)
     print(f'New PPI modularity: {modularity} Old PPI modularity: {old_modularity}')
     
     # Calculates degree distribution
@@ -167,10 +170,21 @@ def compare_networks(old_PPI, new_PPI):
     plt.hist(old_ppi_degrees, bins=max(old_ppi_degrees), alpha=0.5, label='Old PPI')
     plt.hist(new_ppi_degrees, bins=max(new_ppi_degrees), alpha=0.5, label='New PPI')
     plt.xlabel('Degree')
+    plt.yscale('log')
+    plt.xscale('log')
     plt.ylabel('Frequency')
     plt.title('Degree Distribution of Old PPI vs. New PPI')
     plt.legend()
     plt.savefig('NewPPIoldPPIDegreeDisttribution.png')
+    
+    # Calculates second moment
+    def nth_moment_v2(PPI, n):
+        degree_np = np.array(list(dict(PPI.degree).values()))
+        return (sum(degree_np**n)/len(PPI))
+    old_moment = nth_moment_v2(old_PPI, 2)
+    new_moment = nth_moment_v2(new_PPI, 2)
+    print(f'PPI second moment: {old_moment}, GF PPI second moment: {new_moment}')
+    
 
         
             

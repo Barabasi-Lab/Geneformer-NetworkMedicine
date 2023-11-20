@@ -686,7 +686,7 @@ class CellData(Dataset):
         
         return Chembl    
     
-def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'), PR = False, augment = False, noise = None,
+def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'), PR = False, augment = False, noise = None, save = 'Gene.dataset', 
                gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), target_label = "RA", GF_samples = 20000, save_file = None, equalize = True):
     
     cols = []
@@ -765,7 +765,7 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
     
     if PR == True:
         # Calculates TPR and FPR for GeneFormer
-        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 30, geneformer_batch_size = 12,
+        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 30, geneformer_batch_size = 9,
             skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'RA', ROC_curve = False)
         
         # Calculates TPR and FPR for ensemble models
@@ -802,7 +802,7 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
     
     else:
         # Calculates ROC curve for GeneFormer
-        fpr4, tpr4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 50, geneformer_batch_size = 12,
+        fpr4, tpr4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 50, geneformer_batch_size = 9,
             skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 0, output_dir = 'RA')
             
         try:
@@ -1142,8 +1142,8 @@ def get_arguments():
 if __name__ == '__main__':
     args = get_arguments()
     if 'cancer' not in args.type:
-        format_sci(data = Path("GSE97810.csv"), save = "Scipher.dataset", save_file = 'RAROC.svg') #"Enzo_dataset2.csv" "enzo/cancer/lungCancer.csv" 'enzo/RAmap.csv'
+        format_sci(data = Path("GSE97810.csv"), save_file = 'RAROC.svg', save = 'Scipher.dataset') #"Enzo_dataset2.csv" "enzo/cancer/lungCancer.csv" 'enzo/RAmap.csv'
     else:
-        format_sci(data = Path("enzo/cancer/breastCancer.csv"), save = "Scipher.dataset", save_file = 'CancerROC.svg') #"Enzo_dataset2.csv" "enzo/cancer/lungCancer.csv" 'enzo/RAmap.csv'
+        format_sci(data = Path("enzo/cancer/breastCancer.csv"), save_file = 'CancerROC.svg', save = 'Scipher.dataset') #"Enzo_dataset2.csv" "enzo/cancer/lungCancer.csv" 'enzo/RAmap.csv'
 
     

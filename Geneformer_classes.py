@@ -7,10 +7,10 @@ import combine_dicts
 class Perturber:
     def __init__(self, dataset_location = Path("Genecorpus-30M/example_input_files/cell_classification/disease_classification/human_dcm_hcm_nf.dataset/"),
                   model_location = Path("/work/ccnr/GeneFormer/GeneFormer_repo/fine_tuned_models/geneformer-6L-30M_CellClassifier_cardiomyopathies_220224/"),
-                  num_cells = 5000, tokens_list = None, data_subset = None, label = 'disease', dataset_destination = 'Filtered_embdataset'):
+                  num_cells = 5000, tokens_list = None, data_subset = None, label = 'disease', dataset_destination = 'Filtered_embdataset', condition = 'nf'):
              
         # Sets up initial model params
-        self.base_condition = 'nf'
+        self.condition = condition
         self.num_cells = num_cells
         self.model_location = model_location
         self.dataset_location = dataset_location
@@ -47,16 +47,17 @@ class Perturber:
         try:
             # Filters data for relevant conditions and relevant genes
             def filter_sample(data):
-                return data[self.base_condition] == self.label
+                return data[self.label] == self.condition
             
             self.dataset = dataset.filter(filter_sample)
         except:
+            print(traceback.format_exc())
             self.dataset = dataset
     
         
     # Method for setting up a comparison based on nodes adjacent to disease LCC and their neighbors    
     # Primarily applicable if tokens_list = None
-    def create_disease_outside_test(self, disease = 'cardiomyopathy dilated', samples_per_label = 5):
+    def create_disease_outside_test(self, disease = 'cardiomyopathy dilated', samples_per_label = 5, equalize = True):
         self.samples_per_label = samples_per_label
         
         # Obtains disease LCC
@@ -86,8 +87,10 @@ class Perturber:
         self.labels = ['LCC'] * samples_per_label + ['Hop 1'] * samples_per_label + ['Hop 2'] * samples_per_label + ['Random'] * samples_per_label
         self.tokens_list = LCC_nodes + primary_neighbors + secondary_neighbors + random_genes
         
-        self.dataset = equalize_genes(self.dataset, tokens_set = set(self.tokens_list), num_cells = self.num_cells, gene_to_token = self.gene_to_token)
-        print(f'Subsampled test dataset length: {len(self.dataset)}')
+        # If enabled, equalizes dataset to have the same frequency of genes
+        if equalize == True:
+            self.dataset = equalize_genes(self.dataset, tokens_set = set(self.tokens_list), num_cells = self.num_cells, gene_to_token = self.gene_to_token)
+            print(f'Subsampled test dataset length: {len(self.dataset)}')
     
     # Method for setting up a comparison based on a set of given genes  
     # Primarily applicable if tokens_list = None
@@ -136,9 +139,7 @@ class Perturber:
         # Properly parses embeddings               
         true_labels = embex.filtered_input_data[self.label]
         self.cosine_similarities = aggregate_similarities(true_labels = true_labels, samples_per_label = self.samples_per_label, embs = embs, label = self.label)
-        
-        print(self.cosine_similarities)
-        
+           
     # Creates a box plot visualization of the simlilarity data
     def visualize_similarities(self, title = 'SimBoxPlot.svg'):
         plt.figure()
@@ -147,7 +148,9 @@ class Perturber:
         plt.boxplot([self.cosine_similarities[label] for label in labels], labels = labels)
         plt.title(f'Boxplot for Embedding Cosine Similarities to Controls for Genes with \n n Hop Distances from LCC')
         plt.ylabel('Cosine similarity to control')
+        plt.tight_layout()
         plt.savefig(title)
+        print('Saved similarities!')
         
 # Primary class for attention extraction
 class PPI_attention:
@@ -273,7 +276,7 @@ class PPI_attention:
             pk.dump(gene_attentions, f)
             
     # Combines all dictionaries from location with saved attentions
-    def merge_attentions(self, show = True, scale = False, normalize = True, limit = None, attention_location = None):
+    def merge_attentions(self, show = True, scale = False, normalize = False, limit = None, attention_location = None):
         if attention_location == None:
             attention_location = self.attention_location
             
@@ -302,7 +305,7 @@ class PPI_attention:
                     self.gene_attentions[source_gene][target_gene] = normalized_attention
             
         # Scales aggregated dictionary if specified
-        if scale = True:
+        if scale == True:
             values = []
             for _, subdict in self.gene_attentions.items():
                 values.extend(list(subdict.values()))
@@ -325,7 +328,7 @@ class PPI_attention:
             print(f'{total_pairs} total gene-gene attention pairs!')
     
     # Performs mapping and analysis of a certain disease LCC
-    def map_disease_genes(self, disease = None):
+    def map_disease_genes(self, disease = 'Cardiomyopathy Hypertrophic'):
          PPI = instantiate_ppi()
         
          # Identifies disease genes
@@ -349,7 +352,7 @@ class PPI_attention:
          analyze_hops(self.gene_attentions,)
         
          # Analyzes top attentions
-         check_top_attentions(attention_dict = self.gene_attentions,)
+         check_top_attentions(attention_dict = self.gene_attentions, PPI = PPI)
          
     # Performs mapping and analysis of the PPI
     def map_PPI_genes(self):
@@ -368,7 +371,7 @@ class PPI_attention:
         analyze_hops(self.gene_attentions,)
         
         # Analyzes top attentions
-        check_top_attentions(attention_dict = self.gene_attentions,)
+        check_top_attentions(attention_dict = self.gene_attentions, PPI = PPI)
        
     # Creates a new PPI from existing attention weight mappings
     def gen_attention_PPI(self, attention_threshold = 0.005, save = False):
@@ -379,7 +382,7 @@ class PPI_attention:
         print(f'{len(self.PPI.edges())} connections in original PPI, {len(GF_PPI.edges())} connections in GF PPI')
         
         # Performs basic comparison of shared GF PPI/PPI edges
-        compare_networks(GF_PPI, self.PPI)
+        compare_networks(self.PPI, GF_PPI)
         
         
     # Creates a matrix for all attentions
@@ -417,26 +420,27 @@ if __name__ == '__main__':
     
     # Routine for gene perturber
     if args.chosen_class == 'perturber':
-        pert = Perturber(data_subset = 0.5)
-        pert.create_disease_outside_test(disease = 'Cardiomyopathy Hypertrophic', samples_per_label = 5,)
+        pert = Perturber(data_subset = .05, condition = 'hcm')
+        pert.create_disease_outside_test(disease = 'Cardiomyopathy Hypertrophic', samples_per_label = 5, equalize = False)
         pert.run_perturbation()
         pert.visualize_similarities()
     
     # Routine for merging attention dictionaries
     elif args.chosen_class == 'merge':
-        new_attention = PPI_attention()
-        new_attention.merge_attentions(limit = 20, attention_location = Path('/work/ccnr/GeneFormer/GeneFormer_repo/Max_attentions'))
-        new_attention.map_PPI_genes()
+        new_attention = PPI_attention(mean = False) 
+        new_attention.merge_attentions(limit = 20, normalize = True, attention_location = Path('/work/ccnr/GeneFormer/GeneFormer_repo/Max_attentions'))
+        new_attention.map_disease_genes()
         new_attention.save()
         new_attention.gen_attention_PPI()
         
     # Routine for calculating finetuned model on a specific disease
     elif args.chosen_class == 'disease':
         if args.instance == None:
-            new_attention = PPI_attention(layer_index = -1, model_location = Path("/work/ccnr/GeneFormer/GeneFormer_repo/fine_tuned_models/geneformer-6L-30M_CellClassifier_cardiomyopathies_220224/"),
-            dataset_location = Path("Genecorpus-30M/example_input_files/cell_classification/disease_classification/human_dcm_hcm_nf.dataset/"), mean = True)
-            new_attention.scrape_attentions(samples = 500, disease = 'Cardiomyopathy Hypertrophic')
-            new_attention.map_disease_genes(disease = 'Cardiomyopathy Hypertrophic')
+            new_attention = PPI_attention(layer_index = 4, model_location = Path("/work/ccnr/GeneFormer/GeneFormer_repo/fine_tuned_models/geneformer-6L-30M_CellClassifier_cardiomyopathies_220224/"),
+            dataset_location = Path("Genecorpus-30M/example_input_files/cell_classification/disease_classification/human_dcm_hcm_nf.dataset/"), mean = False)
+            new_attention.scrape_attentions(samples = 200, disease = 'Cardiomyopathy Dilated', normalize = True)
+            new_attention.map_disease_genes(disease = 'Cardiomyopathy Dilated')
+            new_attention.map_PPI_genes()
             new_attention.save()
             new_attention.gen_attention_PPI()
             
@@ -448,14 +452,14 @@ if __name__ == '__main__':
     else:
         if args.instance == None:
             new_attention = PPI_attention(layer_index = 4, mean = True)
-            new_attention.scrape_attentions(samples = 1000, disease = None)
+            new_attention.scrape_attentions(samples = 100, disease = None, normalize = False)
             #new_attention.map_PPI_genes()
             new_attention.map_disease_genes(disease = 'Cardiomyopathy Hypertrophic')
             new_attention.save()
             new_attention.gen_attention_PPI()
         else:
-            new_attention = PPI_attention(mean = True)
-            new_attention.scrape_subset(total_jobs = args.total_jobs, instance = args.instance, disease = None)
+            new_attention = PPI_attention(mean = False, attention_location = '/work/ccnr/GeneFormer/GeneFormer_repo/Max_attentions')
+            new_attention.scrape_subset(total_jobs = args.total_jobs, instance = args.instance, disease = None, normalize = False, )
     
     
         

@@ -499,7 +499,6 @@ def F1_score_attention(PPI, gene_attention,):
     for u, v in PPI.edges():
         try:
             real_attentions.append(PPI[u][v]['attention'])
-            real_attentions.append(PPI[u][v]['attention'])
         except:
             pass
             
@@ -531,7 +530,6 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         for u, v in LCC.edges():
             try:
                 LCC_attentions.append(LCC[u][v]['attention'])
-                LCC_attentions.append(LCC[u][v]['attention'])
             except:
                 pass
                 
@@ -539,7 +537,6 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         PPI_attentions = []
         for u, v in PPI.edges():
             try:
-                PPI_attentions.append(PPI[u][v]['attention'])
                 PPI_attentions.append(PPI[u][v]['attention'])
             except:
                 pass
@@ -698,7 +695,7 @@ def process_edges(PPI, attention_dict, min_threshold = 0.00001):
     return real_attentions, total_attentions
         
 # Plots attention distributions for background or a PPI/disease if specified
-def plot_distributions(attention_dict, disease = None, graph = True):    
+def plot_distributions(attention_dict, disease = None, graph = True, probability = True):    
         
     if disease == None:
       
@@ -711,24 +708,28 @@ def plot_distributions(attention_dict, disease = None, graph = True):
         real_attentions = [i for i in real_attentions if isinstance(i, float)]
         total_attentions = [i for i in total_attentions if isinstance(i, float)]
         
-        # Convert to percentages
-        total_attentions = np.array(total_attentions) / np.sum(total_attentions) 
-        real_attentions = np.array(real_attentions) / np.sum(real_attentions) 
-        total_attentions = np.clip(total_attentions, 0, 1)
-        real_attentions = np.clip(real_attentions, 0, 1)
-        
+        # Convert to probability if enabled
+        if probability == True:
+            total_attentions = np.array(total_attentions) / np.sum(total_attentions) 
+            real_attentions = np.array(real_attentions) / np.sum(real_attentions) 
+            total_attentions = np.clip(total_attentions, 0, 1)
+            real_attentions = np.clip(real_attentions, 0, 1)
+            label = 'Probability'
+        else:
+            label = 'Frequency'
+      
         # Plot normalized KDEs
         if graph == True:
-            plt.figure()
-            sns.kdeplot(total_attentions, color='red', label=f'Background Attentions (n={len(total_attentions)})', bw_adjust=0.5)
-            sns.kdeplot(real_attentions, color='green', label=f'PPI Attentions (n={len(real_attentions)})', bw_adjust=0.5)
-            plt.xlabel('Attention Values (Probability)')
-            plt.ylabel('Probabiity')
+            plt.figure(figsize = (12, 8))
+            sns.kdeplot(total_attentions, color='red', label=f'Background Attentions (n={len(total_attentions)})')#, bw_adjust=0.5)
+            sns.kdeplot(real_attentions, color='green', label=f'PPI Attentions (n={len(real_attentions)})')#, bw_adjust=0.5)
+            plt.xlabel(f'Attention Weights')
+            plt.ylabel(label)
             #plt.ylim(0, 1)  # Set y-axis limits to [0, 1]
             #plt.xscale('log')
             #plt.yscale('log')
-            plt.legend(loc='upper right')
-            plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights (Probability)')
+            plt.legend(loc='lower left', bbox_to_anchor=(0, 0.2), ncol=1)
+            plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights')
             
             # Save the plot
             plt.savefig('PPIAttentionDist.png')
@@ -754,23 +755,29 @@ def plot_distributions(attention_dict, disease = None, graph = True):
         PPI_attentions = [i for i in PPI_attentions if isinstance(i, float)]
         
         # Calculate percentages
-        total_attentions = np.array(total_attentions) / np.sum(total_attentions) 
-        real_attentions = np.array(real_attentions) / np.sum(real_attentions) 
-        PPI_attentions = np.array(PPI_attentions) / np.sum(PPI_attentions) 
-    
-        if graph == True:
+        if probability == True:
+            total_attentions = np.array(total_attentions) / np.sum(total_attentions) 
+            real_attentions = np.array(real_attentions) / np.sum(real_attentions) 
+            PPI_attentions = np.array(PPI_attentions) / np.sum(PPI_attentions) 
+            total_attentions = np.clip(total_attentions, 0, 1)
+            real_attentions = np.clip(real_attentions, 0, 1)
+            PPI_attentions = np.clip(PPI_attentions, 0, 1)
+            label = 'Probability'
+        else:
+            label = 'Frequency'
         
+        if graph == True:
             # Plot KDEs
-            plt.figure()
-            plt.xlabel('Normalized Attention Values')
-            plt.ylabel('Probability')
-            #plt.xscale('log')
-            #plt.yscale('log')
+            plt.figure(figsize = (12, 8))
             sns.kdeplot(total_attentions, color='red', label=f'Background Attentions (n={len(total_attentions)})')#, bw_adjust = 0.5)
             sns.kdeplot(real_attentions, color='green', label=f'LCC Attentions (n={len(real_attentions)})')#, bw_adjust = 0.5)
             sns.kdeplot(PPI_attentions, color = 'blue', label = f'PPI Attentions (n={len(PPI_attentions)})')#, bw_adjust = 0.5)
-            plt.legend(loc='upper right')
-            plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights (Probability)')
+            plt.xlabel('Attention Weights')
+            plt.ylabel(label)
+            #plt.xscale('log')
+            #plt.yscale('log')
+            plt.legend(loc='lower left')
+            plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights')
             plt.savefig('LCCPPIAttentionDist.png')
 
 
@@ -780,64 +787,76 @@ def analyze_hops(attention_dict, disease = 'Cardiomyopathy Dilated', top_weights
     PPI, _, _ = map_attention_attention(PPI, attention_dict)
     disease_genes = isolate_disease_genes(disease.lower())
     LCC_gene_list = LCC_genes(PPI, disease_genes)
-    disease_LCC = LCC_genes(PPI, disease_genes, subgraph = True)
     
-    largest_component = max(nx.connected_components(disease_LCC), key=len)
-    ref_node = max(largest_component, key=disease_LCC.degree)
-    nodes = group_nodes_by_hop_distance(PPI, ref_node)
+    hop_range = [i for i in range(1, 6)]
+    attention_hops = {i:[] for i in hop_range}
     
-    average_attention = []
-    hop_attention = []
+    # Subfunction for collecting attention weights from nodes n hops away 
+    def identify_hop_attentions(PPI, ref_node, attention_hops, filter_LCC = None):
+    
+        # If the LCC_gene_list is passed into filter_LCC, no LCC genes will be included
+        if filter_LCC == None:
+            filter_LCC = []
+            
+        # Sorts all nodes by hop distance in PPI 
+        nodes = group_nodes_by_hop_distance(PPI, ref_node)
+        for hop_distance in hop_range:
+            
+            hop_attentions = []
+            for node in nodes[hop_distance]:
+                node = node[0]
+                if node not in filter_LCC:
+                    try:
+                        attention = attention_dict[ref_node][node]
+                        hop_attentions.append(attention)
+                    except:
+                        pass
+            attention_hops[hop_distance].extend(hop_attentions)
+        
+        return attention_hops
+        
+    # Iterates through all LCC genes and performs attention hop analysis
+    for gene in tqdm.tqdm(LCC_gene_list, total = len(LCC_gene_list), desc = 'Finding hops'):
+        attention_hops = identify_hop_attentions(PPI = PPI, ref_node = gene, attention_hops = attention_hops)
+    
+    average_attentions = []
     attention_errors = []
     
-    # Identifies weights from the reference node
-    for hop_distance in range(1, 6):
-        hop_edges_attention = []
-        for node in nodes[hop_distance]:
-            node = node[0]
-            try:
-                attention = attention_dict[ref_node][node]
-                hop_edges_attention.append(attention)
-            except:
-                pass
-                
-        if hop_edges_attention:
-            hop_edges_attention = [i for i in hop_edges_attention if not isinstance(i, list)]
-            hop_attention.append(hop_edges_attention)
-            # Calculate the first and third quartiles
-            first_quartile = np.percentile(hop_edges_attention, 25)
-            median = np.percentile(hop_edges_attention, 50)
-            third_quartile = np.percentile(hop_edges_attention, 75)
-            
-            average_attention.append(np.mean(hop_edges_attention))
-            # Using quartiles for error bars
-            attention_errors.append([median- first_quartile, third_quartile - median])
-            
-        else:
-            average_attention.append(0)
-            attention_errors.append([0, 0])
-    
+    for hop_distance in hop_range:
+        hop_edges_attention = [i for i in attention_hops[hop_distance] if not isinstance(i, list)]
+        
+        #first_quartile = np.percentile(hop_edges_attention, 25)
+        #median = np.percentile(hop_edges_attention, 50)
+        #third_quartile = np.percentile(hop_edges_attention, 75)
+         
+        #average_attention.append(median)
+        #attention_errors.append([median - first_quartile, third_quartile - median])
+        mean = np.mean(hop_edges_attention)
+        stdev = np.std(hop_edges_attention)/2
+        average_attentions.append(mean)
+        assymetric_bound = [mean - stdev/2 if (mean - stdev/2) > 0 else mean][0]
+        attention_errors.append([assymetric_bound, stdev/2])
+        
     # Calculates Correlation
     def calculate_mean(values):
         return sum(values) / len(values)
     
-    def calculate_correlation_coefficient(x, y_nested):
-        # Flatten the y values
-        y_flat = [y_i for y in y_nested for y_i in y]
-    
-        # Expand x values to match the length of each sublist in y
-        x_expanded = [x_val for x_val, y_sublist in zip(x, y_nested) for _ in y_sublist]
-    
-        if len(x_expanded) != len(y_flat):
-            raise ValueError("The expanded x values and flattened y values must have the same length")
-    
+    def calculate_correlation_coefficient(x, y_flat, dist = False):
+        # Calculates for the entire set of points, not just the means/medians if dist set to True
+        if dist == True:
+            x_expanded = []
+            for x_val in x:
+                x_expanded.extend([xval for _ in range(len(y_flat[xval]))])
+            x = x_expanded
+            y_flat = [item for sublist in y_flat for item in sublist]
+            
         # Calculate means
-        mean_x = sum(x_expanded) / len(x_expanded)
+        mean_x = sum(x) / len(x)
         mean_y = sum(y_flat) / len(y_flat)
     
         # Calculate numerator and denominators
-        numerator = sum((x_i - mean_x) * (y_i - mean_y) for x_i, y_i in zip(x_expanded, y_flat))
-        denominator_x = sum((x_i - mean_x) ** 2 for x_i in x_expanded) ** 0.5
+        numerator = sum((x_i - mean_x) * (y_i - mean_y) for x_i, y_i in zip(x, y_flat))
+        denominator_x = sum((x_i - mean_x) ** 2 for x_i in x) ** 0.5
         denominator_y = sum((y_i - mean_y) ** 2 for y_i in y_flat) ** 0.5
     
         # Calculate correlation coefficient
@@ -846,50 +865,35 @@ def analyze_hops(attention_dict, disease = 'Cardiomyopathy Dilated', top_weights
         return correlation_coefficient
 
     x = range(1, 6)
-    print(f'Correlation: {calculate_correlation_coefficient(x, hop_attention)}')
+    print(f'Correlation: {calculate_correlation_coefficient(x, average_attentions)}')
     
     # Plotting
     plt.figure()
-    plt.errorbar(range(1, 6), average_attention, yerr=np.array(attention_errors).T, marker='o', linestyle='-', color='b')
+    plt.errorbar(range(1, 6), average_attentions, yerr=np.array(attention_errors).T, marker='o', linestyle='-', color='b')
     plt.xlabel('Hop Distance')
     plt.ylabel('Avg Attention Weight')
     plt.title(f'Average Attention Weight by Hop Distance \n for {disease} Largest Connected Component')
     plt.tight_layout()
     plt.savefig('hopPlot.png')
-    sorted_weights = sorted(attention_dict[ref_node].items(), key=lambda x: x[1], reverse=True)[:top_weights]
+    
+    sorted_weights = sorted(
+      [(key, subkey, value) for key, subdict in attention_dict.items() for subkey, value in subdict.items()],
+      key=lambda x: x[2], reverse = True
+    )
 
-    for rank, (key, value) in enumerate(sorted_weights, start=1):
-        gene = key
-        hop_distance = None
+    for rank, (key, gene, value) in enumerate(sorted_weights[:top_weights], start=1):
         
-        # Finds hop distance of the gene
-        for hop, node_list in nodes.items():
-            nodes_hop = [node[0] for node in node_list]
-            if gene in nodes_hop:
-                hop_distance = hop
-                break
-        
-        print(f"Top {rank} largest connected weight to {ref_node}: {gene}, {value}")
+        print(f"Top {rank} largest connected weight from {key} to {gene}: {value}")
         print(f'Hop distance: {hop_distance}')
         print('-' * 30)
 
 # Checks the top attentions of a mapped PPI 
-def check_top_attentions(attention_dict, PPI = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/PPI_2022_2022-04-21.csv'), top_number = None, make_range = True):
+def check_top_attentions(attention_dict, PPI, top_number = None, make_range = True):
 
     flattened_dict = [(outer_key, inner_key, value)
                       for outer_key, inner_dict in attention_dict.items()
                       for inner_key, value in inner_dict.items()]
     sorted_tuples = sorted(flattened_dict, key=lambda x: x[2], reverse=True)
-    
-    print(PPI)
-    
-    # Loads PPI in Unidirectional format using pandas
-    try:
-        PPI = pd.read_csv(PPI).drop(columns = ['Source'])
-        PPI = PPI.rename(columns = {'HGNC_Symbol.1':'source', 'HGNC_Symbol.2':'target'})
-    except:
-        PPI = pd.read_table(PPI)[['source', 'target']]
-    PPI = nx.from_pandas_edgelist(df, source='source', target='target', create_using=nx.DiGraph())
     
     if top_number == None:
         top_number = int(len(sorted_tuples))
@@ -923,15 +927,19 @@ def check_top_attentions(attention_dict, PPI = Path('/work/ccnr/GeneFormer/GeneF
         for i in tqdm.tqdm(range(top_number), total = top_number, desc = 'Calculating CDF'):
             attention_weight = sorted_tuples[i]
             try:
-                attention = PPI[attention_weight[0]][attention_weight[1]]
+                attention = PPI[attention_weight[0]][attention_weight[1]]   
                 PPI_nodes += 1
             except:
                 pass
             
-            cdf.append(PPI_nodes/(PPI_len))  
-            
+            cdf.append(PPI_nodes)  
+        
+        # Properly adjusts CDF
+        total_PPI_edges = cdf[-1]
+        cdf = [i/total_PPI_edges for i in cdf]
+        
         PPI_ratio = PPI_nodes/top_number  
-        background_ratio = [(i*background_attention_ratio)/PPI_len for i in range(1, top_number + 1)]
+        background_ratio = [i/top_number for i in range(1, top_number + 1)]
         
         # Calculate CDF
         plt.figure()
