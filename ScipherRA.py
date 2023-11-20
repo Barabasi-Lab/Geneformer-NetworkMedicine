@@ -686,8 +686,52 @@ class CellData(Dataset):
         
         return Chembl    
     
-def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'), PR = False, augment = False, noise = None, save = 'Gene.dataset', 
-               gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), target_label = "RA", GF_samples = 20000, save_file = None, equalize = True):
+# Primary function for running Geneformer analysis
+def format_sci(data, 
+               token_dictionary = Path('geneformer/token_dictionary.pkl'), 
+               PR = False, 
+               augment = False, 
+               noise = None, 
+               save = 'Genes.dataset', 
+               gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), 
+               target_label = "RA", 
+               GF_samples = 20000, 
+               save_file = 'Stats.png', 
+               equalize = True,
+               finetuned_model_location = 'Geneformer-finetuned'):
+    '''
+    KEY FUNCTION PARAMETERS
+    ------------------------------------------
+    data : csv
+        CSV file containing expression/labelled data to be loaded into the model
+        
+    PR : bool, default = False
+        Chooses whether to calculate a precision/recall curve.
+        
+    augment: bool, default = False
+        Chooses whether to create augmented data and use it as a training set (with the true dataset as the test set) or not.
+        
+    noise : None, float, default = None
+        If set to a float, noise equivalent to the noise * the original gene mean for each gene will be applied to the dataset.
+        
+    save : str, path, default = 'Genes.dataset'
+        Save name for the GF-compatible saved dataset created when converting to the proper dataset format.
+        
+    target_label : str, default = 'RA'
+        The name of the column in the csv dataset that contains class labels.
+        
+    GF_samples : int, default = 20000
+        The number of samples to augment in total. Each class is represented equally
+    
+    equalize : bool, default = True
+        Equalizes the dataset so that all classes are represented in equal amounts
+        
+    save_file : bool, None, default = Stats.png
+        Save file for the PR/ROC curve generated
+    
+    finetuned_model_location : str, default = 'Geneformer-finetuned'
+        Location where the finetuned model weights are saved
+    '''
     
     cols = []
     conversion = {}
@@ -695,7 +739,6 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
     
     token_dict = pk.load(open(token_dictionary, 'rb'))
     gene_dict = pk.load(open(gene_conversion, 'rb'))
-    
     
     # Scipher data pre-processing
     if 'das28crp_cat' in data.columns:
@@ -721,9 +764,8 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
         data = pl.concat([data, pl.DataFrame({target_label:labels})], how="horizontal")
         keep = cols + [target_label]
         data = data.select(keep)
-    
-    data = data.rename(conversion)
-    
+        data = data.rename(conversion)
+ 
     # Normalizes individual samples to total read count
     data = normalize_data(data, polars = True, round_data = False)
     data = data.sample(fraction = 1.0, shuffle = True)
@@ -753,10 +795,10 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
         cell_data = CellData(train = None, test = data, label = target_label)
     cell_data.save_to_disk(save)
     
-    with open('cellData.pk', 'wb') as f:
-        pickle.dump(cell_data, f)
-    
-    #cell_data = pickle.load(open('cellData.pk', 'rb'))
+    # If you want to load data instead of creating data for GeneFormer (for replicability), move the 2 lines of save code below to the prior section. To load the dataset, use the bottom line of code
+    #with open(save, 'wb') as f:
+        #pickle.dump(cell_data, save)
+    #cell_data = pickle.load(open(save, 'rb'))
     
     # Selects only genes that are exposed to GeneFormer
     data = data.select(cell_data.ranked_genes + [target_label])
@@ -765,8 +807,8 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
     
     if PR == True:
         # Calculates TPR and FPR for GeneFormer
-        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 30, geneformer_batch_size = 9,
-            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'RA', ROC_curve = False)
+        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = save, epochs = 30, geneformer_batch_size = 9,
+            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'GF-finetuned', ROC_curve = False)
         
         # Calculates TPR and FPR for ensemble models
         try:
@@ -777,33 +819,28 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
             recall3, precision3, auc3 = FFN(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
             recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
             recall1, precision1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
-            
-        #recall3, precision3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
-        #recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
-        #recall1, precision1, auc1 = RandomForest(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
-        
+
         plt.figure(figsize=(8, 6))
         plt.plot(recall1, precision1, color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
         plt.plot(recall2, precision2, color='green', lw=2, label=f'SVC (AUC = {round(auc2, 3)})')
         plt.plot(recall3, precision3, color = 'blue', lw=3, label = f'Feed-Forward Network (AUC = {round(auc3, 3)})')
         plt.plot(recall4, precision4, color = 'red', lw=3, label = f'GeneFormer (AUC = {round(auc4, 3)})')
-        
-        #plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
         plt.plot([0, 1], [dataset_bias, dataset_bias], color = 'navy', lw = 2, linestyle = '--', label = 'Chance')
         plt.xlim([-.05, 1.05])
-        #plt.ylim([0, 1.05])
         plt.xlabel('Recall')
         plt.ylabel('Precision')
         plt.title(f'RA Dataset Precision/Recall for Geneformer and Ensemble Models \n (n = {len(data)})')
-        #plt.title(f'Shuffling before augmentation ROC Curve (n = 20000 samples, mbinomial augmentation)')
         plt.legend(loc='lower left', bbox_to_anchor=(0, 0.2), ncol=1)
         plt.tight_layout()
-        plt.savefig(save_file)
+        
+        # Saves image
+        if save_img:
+            plt.savefig(save_img)
     
     else:
         # Calculates ROC curve for GeneFormer
         fpr4, tpr4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 50, geneformer_batch_size = 9,
-            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 0, output_dir = 'RA')
+            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 0, output_dir = 'GF-finetuned')
             
         try:
             fpr3, tpr3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False)
@@ -815,12 +852,10 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
             fpr1, tpr1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
             
         plt.figure(figsize=(8, 6))
-        
         plt.plot(fpr1, tpr1, color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
         plt.plot(fpr2, tpr2, color='green', lw=2, label=f'SVC (AUC = {round(auc2, 3)})')
         plt.plot(fpr3, tpr3, color = 'blue', lw=3, label = f'Feed-Forward Network (AUC = {round(auc3, 3)})')
         plt.plot(tpr4, fpr4, color = 'red', lw=3, label = f'GeneFormer (AUC = {round(auc4, 3)})')
-    
         plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
         plt.xlim([-.05, 1.05])
         plt.ylim([0, 1.05])
@@ -834,10 +869,12 @@ def format_sci(data, token_dictionary = Path('geneformer/token_dictionary.pkl'),
         #plt.title(f'Shuffling before augmentation ROC Curve (n = 20000 samples, mbinomial augmentation)')
         plt.legend(loc='lower left', bbox_to_anchor=(.5, 0.2), ncol=1)
         plt.tight_layout()
-        plt.savefig(save_file)
-
-    return data
+        
+        # Saves image
+        if save_img:
+            plt.savefig(save_img)
     
+# Function for equalizing labels
 def equalize_data(data, label = 'RA'):
     labels = data[label].to_list()
     label_set = list(set(labels))
@@ -860,6 +897,7 @@ def equalize_data(data, label = 'RA'):
 
     return data
     
+# Function for shuffling a certain number of labels
 def shuffle_labels(data, label = 'RA', fraction = 1):
     data.sample(fraction = 1, shuffle = True)
     labels = data[label].to_list()
@@ -1142,8 +1180,8 @@ def get_arguments():
 if __name__ == '__main__':
     args = get_arguments()
     if 'cancer' not in args.type:
-        format_sci(data = Path("GSE97810.csv"), save_file = 'RAROC.svg', save = 'Scipher.dataset') #"Enzo_dataset2.csv" "enzo/cancer/lungCancer.csv" 'enzo/RAmap.csv'
+        format_sci(data = Path("GSE97810.csv"), save_file = 'RAROC.svg', save = 'Scipher.dataset', equalize = True) #"Enzo_dataset2.csv" 'enzo/RAmap.csv'
     else:
-        format_sci(data = Path("enzo/cancer/breastCancer.csv"), save_file = 'CancerROC.svg', save = 'Scipher.dataset') #"Enzo_dataset2.csv" "enzo/cancer/lungCancer.csv" 'enzo/RAmap.csv'
+        format_sci(data = Path("enzo/cancer/lungCancer.csv"), save_file = 'CancerROC.svg', save = 'Scipher.dataset', equalize = True) 
 
     
