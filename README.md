@@ -1,5 +1,5 @@
 # Geneformer-NetworkMedicine
-Application of Geneformer for Network Medicine
+This repository contains aggregated code for testing out various functionalities of [Geneformer](https://huggingface.co/ctheodoris/Geneformer/discussions/265) with regards to network medicine, including Protein-Protein interaction mapping, attention weight analysis, gene perturbation analysis, and application of Geneformer to Bulk-RNA data. 
 
 # Modules
 ## Geneformer drug prediction
