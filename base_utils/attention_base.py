@@ -695,7 +695,7 @@ def process_edges(PPI, attention_dict, min_threshold = 0.00001):
     return real_attentions, total_attentions
         
 # Plots attention distributions for background or a PPI/disease if specified
-def plot_distributions(attention_dict, disease = None, graph = True, probability = True):    
+def plot_distributions(attention_dict, disease = None, graph = True, probability = False):    
         
     if disease == None:
       
@@ -726,8 +726,8 @@ def plot_distributions(attention_dict, disease = None, graph = True, probability
             plt.xlabel(f'Attention Weights')
             plt.ylabel(label)
             #plt.ylim(0, 1)  # Set y-axis limits to [0, 1]
-            #plt.xscale('log')
-            #plt.yscale('log')
+            plt.xscale('log')
+            plt.yscale('log')
             plt.legend(loc='lower left', bbox_to_anchor=(0, 0.2), ncol=1)
             plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights')
             
@@ -774,8 +774,8 @@ def plot_distributions(attention_dict, disease = None, graph = True, probability
             sns.kdeplot(PPI_attentions, color = 'blue', label = f'PPI Attentions (n={len(PPI_attentions)})')#, bw_adjust = 0.5)
             plt.xlabel('Attention Weights')
             plt.ylabel(label)
-            #plt.xscale('log')
-            #plt.yscale('log')
+            plt.xscale('log')
+            plt.yscale('log')
             plt.legend(loc='lower left')
             plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights')
             plt.savefig('LCCPPIAttentionDist.png')
@@ -821,16 +821,18 @@ def analyze_hops(attention_dict, disease = 'Cardiomyopathy Dilated', top_weights
     
     average_attentions = []
     attention_errors = []
+    flattened_attentions = []
     
     for hop_distance in hop_range:
         hop_edges_attention = [i for i in attention_hops[hop_distance] if not isinstance(i, list)]
+        flattened_attentions.extend(hop_edges_attention)
         
         #first_quartile = np.percentile(hop_edges_attention, 25)
         #median = np.percentile(hop_edges_attention, 50)
         #third_quartile = np.percentile(hop_edges_attention, 75)
-         
         #average_attention.append(median)
         #attention_errors.append([median - first_quartile, third_quartile - median])
+        
         mean = np.mean(hop_edges_attention)
         stdev = np.std(hop_edges_attention)/2
         average_attentions.append(mean)
@@ -865,7 +867,7 @@ def analyze_hops(attention_dict, disease = 'Cardiomyopathy Dilated', top_weights
         return correlation_coefficient
 
     x = range(1, 6)
-    print(f'Correlation: {calculate_correlation_coefficient(x, average_attentions)}')
+    print(f'Correlation: {calculate_correlation_coefficient(x, flattened_attentions, dist = True)}')
     
     # Plotting
     plt.figure()
