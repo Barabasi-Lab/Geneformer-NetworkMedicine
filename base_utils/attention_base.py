@@ -105,6 +105,7 @@ def process_batch(attentions):
         source_genes = [genes[i] for i in non_none_indices]
         target_genes = [genes[j] for j in non_none_indices]
 
+        # Iterates through attention heads
         for attention_head_num in range(num_attention_heads):
             attention_head = attention_matrix[attention_head_num]
             attention_weights = attention_head[np.arange(len(source_genes))[:, None], np.arange(len(target_genes))]
@@ -118,16 +119,14 @@ def process_batch(attentions):
     
 # Primary runtime function for extracting attention weights
 def extract_attention(model_location = '.', data = '/work/ccnr/GeneFormer/GeneFormer_repo/Genecorpus-30M/genecorpus_30M_2048.dataset',
-                      samples = 1000, layer_index = 4, gene_conversion = "/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl", token_dictionary = "/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/token_dictionary.pkl", mean = False, attention_threshold = 0, top_connections = None, normalize = True, num_processes = os.cpu_count(), scale = False, filter_genes = None, save = False, data_sample = None, half = True,
-                      organ = None):
+                      samples = 1000, layer_index = 4, gene_conversion = "/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl", token_dictionary = "/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/token_dictionary.pkl", 
+                      mean = False, top_connections = None, num_processes = os.cpu_count(), filter_genes = None, save = False, data_sample = None, half = False,
+                      organ = None, save_threshold = False):
     '''
     PARAMETERS
     -----------------------------------------
     samples : int, str
         Number of samples to sample from the dataset. If 'all', the entire dataset will be used.  Defaults to 10,000
-
-    attention_threshold : int
-        The number of gene/gene attentions required to be considered a significant attention. Anything below will be thrown out. Defaults to 0
 
     top_connections : int, None
         The number of strongest attention weights that should be returned along with the dictionary of all attention weights. If set to None, none of these weights are collected. Defaults to None
@@ -185,7 +184,7 @@ def extract_attention(model_location = '.', data = '/work/ccnr/GeneFormer/GeneFo
     
     # Reads huggingface-formatted dataset
     data = load_from_disk(data)
-    
+
     # Filters for a specific organ if specified
     if organ:
         def organ_filter(example):
@@ -336,54 +335,49 @@ def extract_attention(model_location = '.', data = '/work/ccnr/GeneFormer/GeneFo
     gene_attentions = dict(gene_attentions)
     
     # Adds weights to master dictionary
-    aggregated_gene_attentions = {}
-
+    aggregated_gene_attentions = defaultdict(lambda: defaultdict(list))
+  
     # Turns the array of attention weights into a single gene/gene attention based on whether the user selects the maximum or the average
     if mean == True:
-        for source_gene, target_genes in tqdm.tqdm(gene_attentions.items(), total = len(gene_attentions.items()), desc = 'Narrowing results'):
-            for target_gene, attentions in target_genes.items():
-                if len(attentions) > attention_threshold:
+        # Creates a threshold for saving weights, if enabled
+        if save_threshold:
+            flattened_genes = [sum(value)/len(value) for _, subdict in gene_attentions.items() for _, value in subdict]
+            flattened_mean = sum(flattened_genes)/len(flattened_genes)
+            flattened_std = statistics.stdev(flattened_genes)
+            threshold = flattened_mean + flattened_std
+            
+            for source_gene, target_genes in tqdm.tqdm(gene_attentions.items(), total = len(gene_attentions.items()), desc = 'Narrowing results'):
+                for target_gene, attentions in target_genes.items():
                     # Creates new dictionary for source gene if not already existing
-                    if source_gene not in aggregated_gene_attentions.keys():
-                        aggregated_gene_attentions[source_gene] = {}
+
+                    average_attention = np.mean(attentions)
+                    if average_attention > threshold:
+                        aggregated_gene_attentions[source_gene][target_gene].append((len(attentions), average_attention))
+                        
+        else:
+            for source_gene, target_genes in tqdm.tqdm(gene_attentions.items(), total = len(gene_attentions.items()), desc = 'Narrowing results'):
+                for target_gene, attentions in target_genes.items():
+                    # Creates new dictionary for source gene if not already existing
     
-                    average_attention = sum(attentions) / len(attentions)
-                    aggregated_gene_attentions[source_gene][target_gene] = average_attention
+                    average_attention = np.mean(attentions)
+                    aggregated_gene_attentions[source_gene][target_gene].append((len(attentions), average_attention))
     else:
-        aggregated_gene_attentions = gene_attentions
-    
-    # Normalize the entire dictionary to the range [0, 1] if enabled
-    if normalize == True:
-        min_value = min([min(attentions.values()) for attentions in aggregated_gene_attentions.values() if len(attentions) > 0])
-        max_value = max([max(attentions.values()) for attentions in aggregated_gene_attentions.values() if len(attentions) > 0])
-        
-        minmax = max_value - min_value
-        for source_gene, target_genes in aggregated_gene_attentions.items():
-            for target_gene in target_genes:
 
-                # Normalize the attention value
-                normalized_attention = (aggregated_gene_attentions[source_gene][target_gene] - min_value) / minmax
-
-                # Update the dictionary with the normalized value
-                aggregated_gene_attentions[source_gene][target_gene] = normalized_attention
-        
-    # Scales the entire dictionary to have a mean at 0 if enabled
-    if scale == True:
-        values = []
-        for _, subdict in aggregated_gene_attentions.items():
-            values.extend(list(subdict.values()))
-        values = [[value] for value in values]
-
-        # Scale the values using StandardScaler
-        scaler = StandardScaler()
-        scaled_values = scaler.fit_transform(values)
-
-        # Update aggregated_gene_attentions with scaled values
-        index = 0
-        for _, subdict in aggregated_gene_attentions.items():
-            for target_key in subdict:
-                subdict[target_key] = scaled_values[index][0]
-                index += 1
+        # Creates a threshold for saving weights, if enabled
+        if save_threshold:
+            flattened_genes = [value for _, subdict in gene_attentions.items() for _, value in subdict]
+            flattened_mean = sum(flattened_genes)/len(flattened_genes)
+            flattened_std = statistics.stdev(flattened_genes)
+            threshold = flattened_mean + flattened_std
+            
+            # Removes weights below the threshold
+            for key, subdict in gene_attentions.items():
+                for subkey, value in subdict.items():
+                    if value <= threshold:
+                        gene_attentions[key].pop(subkey)
+        else:
+            aggregated_gene_attentions = gene_attentions
+    aggregated_gene_attentions = dict(aggregated_gene_attentions)
 
     end = time.perf_counter()
     print(f'Total minutes elapsed: {round((end - start)/60, 4)} minutes')
@@ -395,9 +389,15 @@ def extract_attention(model_location = '.', data = '/work/ccnr/GeneFormer/GeneFo
     if top_connections and top_connections > 0:
         # Obtains the top N attention pairs from the aggregated gene attention dataset if enabled
         top_attention_pairs = []
-        for source_gene, target_genes in aggregated_gene_attentions.items():
-            for target_gene, avg_attention in target_genes.items():
-                top_attention_pairs.append(((source_gene, target_gene), avg_attention))
+
+        if mean == True:
+            for source_gene, target_genes in aggregated_gene_attentions.items():
+                for target_gene, avg_attention in target_genes.items():
+                    top_attention_pairs.append(((source_gene, target_gene), avg_attention[1]))
+        else:
+            for source_gene, target_genes in aggregated_gene_attentions.items():
+                for target_gene, avg_attention in target_genes.items():
+                    top_attention_pairs.append(((source_gene, target_gene), avg_attention))
     
         # Sorts and subsets top pairs
         top_attention_pairs.sort(key=lambda x: x[1], reverse=True)
@@ -411,20 +411,26 @@ def extract_attention(model_location = '.', data = '/work/ccnr/GeneFormer/GeneFo
         return aggregated_gene_attentions
     
 # Maps attention scores to PPI
-def map_attention_attention(PPI, gene_attentions, show = True):
+def map_attention_attention(PPI, gene_attentions, show = True, save = False):
     # Make a copy of the original graph
     PPI_copy = nx.Graph(PPI)
- 
+
     # Maps attention weights to PPI and identifies edges without attentions
     edges_to_remove = []
     for u, v in list(PPI_copy.edges()):
-        if (u in gene_attentions) and (v in gene_attentions[u]):
-            attention = gene_attentions[u][v]
-            PPI_copy[u][v]['attention'] = attention
-        elif (v in gene_attentions) and (u in gene_attentions[v]):
-            attention = gene_attentions[v][u]
-            PPI_copy[u][v]['attention'] = attention
-        else:
+
+        # Selects maximum attention in both directions to account for bidirectionality
+        try:
+            attention_direction1 = gene_attentions[u][v]
+            attention_direction2 = gene_attentions[v][u]
+            selected_attention = max(attention_direction1, attention_direction2)
+            #selected_attention = gene_attentions[u][v]
+
+            if not isinstance(selected_attention, list):
+                PPI_copy[u][v]['attention'] = selected_attention
+            else:
+                edges_to_remove.append((u, v))
+        except:
             edges_to_remove.append((u, v))
     
     # Remove edges without valid attention mapping
@@ -438,12 +444,16 @@ def map_attention_attention(PPI, gene_attentions, show = True):
     
     # Generates edge statistics
     total_attention = [gene_attentions[u][v] for u in gene_attentions for v in gene_attentions[u]]
+    total_attention = [i for i in total_attention if not isinstance(i, list)]
     average_total_attention = sum(total_attention) / len(total_attention)
-    
     
     # Perform t-test
     t_stat, p_value = ttest_ind(edge_attentions, total_attention)
     
+    # Saves if enabled
+    if save:
+        pk.dump(PPI_copy, open('attention_PPI.pk', 'wb'))
+
     if show == True:
         print(f'Network attention: {average_edge_attention}')
         print(f'Network attention standard deviation: {statistics.median(edge_attentions)}')
@@ -451,7 +461,7 @@ def map_attention_attention(PPI, gene_attentions, show = True):
         print(f'Total attention: {average_total_attention}')
         print(f'Total attention standard deviation: {statistics.median(total_attention)}')
         print(f'T-test p-value: {p_value} \n')
-        
+
     return PPI_copy, average_edge_attention, average_total_attention
     
 # Function for creating fake edges
@@ -474,10 +484,18 @@ def generate_fake_attentions(graph, num_fake_attentions, gene_attentions, node_t
             # Ensure the edge is not already in the fake edges list
             if (node1, node2) not in fake_edges and (node2, node1) not in fake_edges:          
                 try:
-                    fake_attentions.append(gene_attentions[node1][node2])
+                    attention = gene_attentions[node1][node2]
+                    if not isinstance(attention, list):
+                        fake_attentions.append(attention)
+                    else:
+                        raise ValueError
                 except:
                     try:
-                        fake_attentions.append(gene_attentions[node2][node1])                        
+                        attention = gene_attentions[node2][node1]
+                        if not isinstance(attention, list):
+                            fake_attentions.append(attention)
+                        else:
+                            raise ValueError                      
                     except:
                         continue
                 
@@ -498,7 +516,10 @@ def F1_score_attention(PPI, gene_attention,):
     real_attentions = []
     for u, v in PPI.edges():
         try:
-            real_attentions.append(PPI[u][v]['attention'])
+            attention = PPI[u][v]['attention']
+            if not isinstance(attention, list):
+                real_attentions.append(attention)
+        
         except:
             pass
             
@@ -519,7 +540,7 @@ def F1_score_attention(PPI, gene_attention,):
     print(f'AUC score: {pr_auc}')
 
 # Calculates F1 scores for PPI and LCC, calculates both their AUC curves and graphs them
-def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = True):
+def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = True, LCC_show = True):
 
     # Dictionary for converting nodes to numerical tokens
     node_to_index = {node: index for index, node in enumerate(PPI.nodes())}
@@ -529,15 +550,36 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         LCC_attentions = []
         for u, v in LCC.edges():
             try:
-                LCC_attentions.append(LCC[u][v]['attention'])
+                attention = LCC[u][v]['attention']
+                if not isinstance(attention, list):
+
+                    # Bulks up size by sampling 3 times
+                    LCC_attentions.append(attention)
+                    LCC_attentions.append(attention)
+                    LCC_attentions.append(attention)
+
             except:
                 pass
-                
+
+        if LCC_show:
+            LCC_ranked = []
+            for u, v in LCC.edges():
+                try:
+                    LCC_ranked.append((u, v, LCC[u][v]['attention']))
+                except:
+                    pass
+            LCC_ranked = sorted(LCC_ranked, key = lambda x: x[2], reverse = True)
+            print(f'Top ranked: {LCC_ranked[:5]}')
+            print(f'Bottom ranked: {LCC_ranked[-5:]}')
+            
+
         # Obtains PPI attentions
         PPI_attentions = []
         for u, v in PPI.edges():
             try:
-                PPI_attentions.append(PPI[u][v]['attention'])
+                attention = PPI[u][v]['attention']
+                if not isinstance(attention, list):
+                    PPI_attentions.append(attention)
             except:
                 pass
         
@@ -554,7 +596,7 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         fake_LCC_attentions = fake_attentions + LCC_attentions
         PPI_LCC_attentions = PPI_attentions + LCC_attentions
         PPI_fake_attentions = fake_attentions + PPI_attentions
-        
+     
         # Assuming you have y_pred as the predicted labels (0 or 1) and y_prob as predicted probabilities for the positive class
         fpr1, tpr1, _ = roc_curve(labels, fake_LCC_attentions)
         fpr2, tpr2, _ = roc_curve(labels, PPI_LCC_attentions)
@@ -564,7 +606,7 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         LCC_auc = auc(fpr2, tpr2)
         fake_auc = auc(fpr1, tpr1)
         PPI_auc = auc(fpr3, tpr3)
-        
+
         if show == True:
             print(f'LCC-Fake AUC score: {fake_auc}')
             print(f'LCC-PPI AUC score: {LCC_auc}')
@@ -593,11 +635,12 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         real_attentions = []
         for u, v in PPI.edges():
             try:
-                real_attentions.append(PPI[u][v]['attention'])
-                real_attentions.append(PPI[u][v]['attention'])
+                attention = PPI[u][v]['attention']
+                if not isinstance(attention, list):
+                    real_attentions.append(attention)
             except:
                 pass
-                
+     
         # Geneates fake attentions
         fake_attentions = generate_fake_attentions(PPI, len(real_attentions), gene_attentions, node_to_index)
         
@@ -678,7 +721,9 @@ def process_edges(PPI, attention_dict, min_threshold = 0.00001):
         for u, v in total_edges:
             try:
                 attention = PPI[u][v]['attention']
-                real_attentions.append(attention)
+                if not isinstance(attention, list):
+                    real_attentions.append(attention)
+            
             except KeyError:
                 pass
             pbar.update()
@@ -686,7 +731,7 @@ def process_edges(PPI, attention_dict, min_threshold = 0.00001):
     # Obtains all edges
     total_attentions = []
     for val in attention_dict.values():
-        total_attentions.extend(list(val.values()))
+        total_attentions.extend([i for i in list(val.values()) if not isinstance(i, list)])
         
     # Checks all edges by threshold
     real_attentions = [i for i in real_attentions if i > min_threshold]
@@ -695,7 +740,7 @@ def process_edges(PPI, attention_dict, min_threshold = 0.00001):
     return real_attentions, total_attentions
         
 # Plots attention distributions for background or a PPI/disease if specified
-def plot_distributions(attention_dict, disease = None, graph = True, probability = False):    
+def plot_distributions(attention_dict, disease = None, graph = True, probability = False,):    
         
     if disease == None:
       
@@ -748,12 +793,14 @@ def plot_distributions(attention_dict, disease = None, graph = True, probability
         
         # Parallel processing to extract attentions
         real_attentions, total_attentions = process_edges(PPI = LCC, attention_dict = attention_dict, min_threshold = 0.00001)
+
+        # Shows top and bottom PPI pairings if enabled
         PPI_attentions, _ = process_edges(PPI = PPI, attention_dict = attention_dict, min_threshold = 0.00001)
         
-        real_attentions = [i for i in real_attentions if isinstance(i, float)]
-        total_attentions = [i for i in total_attentions if isinstance(i, float)]
-        PPI_attentions = [i for i in PPI_attentions if isinstance(i, float)]
-        
+        real_attentions = [i for i in real_attentions if not isinstance(i, list)]
+        total_attentions = [i for i in total_attentions if not isinstance(i, list)]
+        PPI_attentions = [i for i in PPI_attentions if not isinstance(i, list)]
+    
         # Calculate percentages
         if probability == True:
             total_attentions = np.array(total_attentions) / np.sum(total_attentions) 
@@ -776,117 +823,162 @@ def plot_distributions(attention_dict, disease = None, graph = True, probability
             plt.ylabel(label)
             plt.xscale('log')
             plt.yscale('log')
-            plt.legend(loc='lower left')
+            plt.legend(loc='lower left', bbox_to_anchor=(0, 0.2), ncol=1)
             plt.title('Attention Weight Distribution for PPI Network \n vs Background Attention Weights')
             plt.savefig('LCCPPIAttentionDist.png')
 
 
 # Performs analysis of attention weights
-def analyze_hops(attention_dict, disease = 'Cardiomyopathy Dilated', top_weights = 10):
+def analyze_hops(attention_dict, disease = 'Cardiomyopathy Dilated', top_weights = 3, shortest_hop = False):
     PPI = instantiate_ppi()
     PPI, _, _ = map_attention_attention(PPI, attention_dict)
     disease_genes = isolate_disease_genes(disease.lower())
     LCC_gene_list = LCC_genes(PPI, disease_genes)
     
-    hop_range = [i for i in range(1, 6)]
-    attention_hops = {i:[] for i in hop_range}
-    
-    # Subfunction for collecting attention weights from nodes n hops away 
-    def identify_hop_attentions(PPI, ref_node, attention_hops, filter_LCC = None):
-    
-        # If the LCC_gene_list is passed into filter_LCC, no LCC genes will be included
-        if filter_LCC == None:
-            filter_LCC = []
-            
-        # Sorts all nodes by hop distance in PPI 
-        nodes = group_nodes_by_hop_distance(PPI, ref_node)
-        for hop_distance in hop_range:
-            
-            hop_attentions = []
-            for node in nodes[hop_distance]:
-                node = node[0]
-                if node not in filter_LCC:
-                    try:
-                        attention = attention_dict[ref_node][node]
-                        hop_attentions.append(attention)
-                    except:
-                        pass
-            attention_hops[hop_distance].extend(hop_attentions)
-        
-        return attention_hops
-        
-    # Iterates through all LCC genes and performs attention hop analysis
-    for gene in tqdm.tqdm(LCC_gene_list, total = len(LCC_gene_list), desc = 'Finding hops'):
-        attention_hops = identify_hop_attentions(PPI = PPI, ref_node = gene, attention_hops = attention_hops)
-    
-    average_attentions = []
-    attention_errors = []
-    flattened_attentions = []
-    
-    for hop_distance in hop_range:
-        hop_edges_attention = [i for i in attention_hops[hop_distance] if not isinstance(i, list)]
-        flattened_attentions.extend(hop_edges_attention)
-        
-        #first_quartile = np.percentile(hop_edges_attention, 25)
-        #median = np.percentile(hop_edges_attention, 50)
-        #third_quartile = np.percentile(hop_edges_attention, 75)
-        #average_attention.append(median)
-        #attention_errors.append([median - first_quartile, third_quartile - median])
-        
-        mean = np.mean(hop_edges_attention)
-        stdev = np.std(hop_edges_attention)/2
-        average_attentions.append(mean)
-        assymetric_bound = [mean - stdev/2 if (mean - stdev/2) > 0 else mean][0]
-        attention_errors.append([assymetric_bound, stdev/2])
-        
-    # Calculates Correlation
     def calculate_mean(values):
-        return sum(values) / len(values)
-    
-    def calculate_correlation_coefficient(x, y_flat, dist = False):
-        # Calculates for the entire set of points, not just the means/medians if dist set to True
-        if dist == True:
-            x_expanded = []
-            for x_val in x:
-                x_expanded.extend([xval for _ in range(len(y_flat[xval]))])
-            x = x_expanded
-            y_flat = [item for sublist in y_flat for item in sublist]
-            
+        return np.mean(values)
+
+    # Calculates Correlation
+    def calculate_correlation_coefficient(x, y):
         # Calculate means
-        mean_x = sum(x) / len(x)
-        mean_y = sum(y_flat) / len(y_flat)
+        mean_x = np.mean(x)
+        mean_y = np.mean(y)
     
         # Calculate numerator and denominators
-        numerator = sum((x_i - mean_x) * (y_i - mean_y) for x_i, y_i in zip(x, y_flat))
+        numerator = sum((x_i - mean_x) * (y_i - mean_y) for x_i, y_i in zip(x, y))
         denominator_x = sum((x_i - mean_x) ** 2 for x_i in x) ** 0.5
-        denominator_y = sum((y_i - mean_y) ** 2 for y_i in y_flat) ** 0.5
+        denominator_y = sum((y_i - mean_y) ** 2 for y_i in y) ** 0.5
     
         # Calculate correlation coefficient
         correlation_coefficient = numerator / (denominator_x * denominator_y) if denominator_x * denominator_y != 0 else 0
     
-        return correlation_coefficient
+        # Calculates line of best fit
+        x = np.array(x).astype(np.float64)
+        y = np.array(y).astype(np.float64)
+        coefficients = np.polyfit(x, y, 1)
+        polynomial = np.poly1d(coefficients)
+        best_fit = polynomial(x)
 
-    x = range(1, 6)
-    print(f'Correlation: {calculate_correlation_coefficient(x, flattened_attentions, dist = True)}')
-    
-    # Plotting
-    plt.figure()
-    plt.errorbar(range(1, 6), average_attentions, yerr=np.array(attention_errors).T, marker='o', linestyle='-', color='b')
-    plt.xlabel('Hop Distance')
-    plt.ylabel('Avg Attention Weight')
-    plt.title(f'Average Attention Weight by Hop Distance \n for {disease} Largest Connected Component')
-    plt.tight_layout()
-    plt.savefig('hopPlot.png')
-    
+        return correlation_coefficient, best_fit
+            
+    if shortest_hop != True:
+        hop_range = [i for i in range(1, 6)]
+        attention_hops = {i:[] for i in hop_range}
+        # Subfunction for collecting attention weights from nodes n hops away 
+        def identify_hop_attentions(PPI, ref_node, attention_hops, filter_LCC = None):
+        
+            # If the LCC_gene_list is passed into filter_LCC, no LCC genes will be included
+            if filter_LCC == None:
+                filter_LCC = []
+                
+            # Sorts all nodes by hop distance in PPI 
+            nodes = group_nodes_by_hop_distance(PPI, ref_node)
+            for hop_distance in hop_range:
+                
+                hop_attentions = []
+                for node in nodes[hop_distance]:
+                    node = node[0]
+                    if node not in filter_LCC:
+                        try:
+                            attention = attention_dict[ref_node][node]
+                            hop_attentions.append(attention)
+                        except:
+                            pass
+                attention_hops[hop_distance].extend(hop_attentions)
+            
+            return attention_hops
+            
+        # Iterates through all LCC genes and performs attention hop analysis
+        for gene in tqdm.tqdm(LCC_gene_list, total = len(LCC_gene_list), desc = 'Finding hops'):
+            attention_hops = identify_hop_attentions(PPI = PPI, ref_node = gene, attention_hops = attention_hops)
+        
+        average_attentions = []
+        attention_errors = []
+        hop_edges_dict = {}
+        flattened_attentions = []
+        x = []
+        average_stdev = []
+
+        for hop_distance in hop_range:
+            hop_edges_attention = [i for i in attention_hops[hop_distance] if not isinstance(i, list)]
+            flattened_attentions.extend(hop_edges_attention)
+            x.extend([hop_distance]*len(hop_edges_attention))
+            mean = np.mean(hop_edges_attention)
+            stdev = np.std(hop_edges_attention)/2
+            average_stdev.append(stdev)
+            average_attentions.append(mean)
+            lower_bound = [mean - stdev/2 if (mean - stdev/2) > 0 else mean][0]
+            upper_bound = [stdev/2 if lower_bound != mean else abs(mean - stdev/2) + stdev/2][0]
+            attention_errors.append([lower_bound, upper_bound])
+
+        correlation, _ = calculate_correlation_coefficient(x, flattened_attentions)
+        average_correlation, _ = calculate_correlation_coefficient(hop_range, average_attentions)
+        print(f'Correlation: {correlation}')
+        print(f'Average Correlation: {average_correlation}')
+
+        # Plotting
+        plt.figure()
+        plt.plot(hop_range, average_attentions, color = 'blue', marker = 'o', label = 'Average Attention')
+        plt.plot(hop_range, average_stdev, color = 'red', marker = 'x', label = 'Standard Deviation')
+        #plt.scatter(shortest_path_averages, stdev_attentions, color = 'red', marker = 'o', label = 'Standard Deviation')
+        plt.xlabel('Hop Distance')
+        plt.ylabel('Avg Attention Weight')
+        plt.title(f'Average Attention Weight by Hop Distance \n for {disease} Largest Connected Component')
+        plt.legend(loc='upper right', bbox_to_anchor=(0, 0.2), ncol=1)
+        plt.tight_layout()
+        plt.savefig('old_hopPlot.png')
+        
+    else:
+        # Create a function to calculate the shortest path average for all LCC components to a given node
+        def shortest_path_average(PPI, LCC_gene_list, node):
+            shortest_paths = [nx.shortest_path_length(PPI, source=gene, target=node) for gene in LCC_gene_list if nx.has_path(PPI, gene, node)]
+            return np.mean(shortest_paths) if shortest_paths else None
+
+        # Function to calculate the average attention weight from LCC genes to a given node
+        def average_attention_weight(LCC_gene_list, node, attention_dict):
+            attention_weights = [attention_dict[gene][node] for gene in LCC_gene_list if gene in attention_dict and node in attention_dict[gene] and not isinstance(attention_dict[gene][node], list)]
+            average = np.mean(attention_weights) if attention_weights else None
+            stdev = np.std(attention_weights)
+            return average, stdev
+
+        # Lists to store the shortest path averages and average attention weights
+        shortest_path_averages = []
+        average_attentions = []
+        stdev_attentions = []
+
+        # Iterating over every node in the PPI and performing the required calculations
+        for node in tqdm.tqdm(PPI.nodes(), desc='Processing nodes'):
+            sp_avg = shortest_path_average(PPI, LCC_gene_list, node)
+            avg_attention, stdev = average_attention_weight(LCC_gene_list, node, attention_dict)
+
+            if sp_avg is not None and avg_attention is not None:
+                shortest_path_averages.append(sp_avg)
+                average_attentions.append(avg_attention)
+                stdev_attentions.append(stdev)
+
+        correlation, y_fit = calculate_correlation_coefficient(shortest_path_averages, average_attentions)
+        print(f'Correlation: {correlation}')
+        
+        # Plotting
+        plt.figure()
+        plt.scatter(shortest_path_averages, average_attentions, marker = 'x', color = 'blue', label = 'Paths')
+        plt.plot(shortest_path_averages, y_fit, color = 'red', label = 'Linear Fit')
+        #plt.scatter(shortest_path_averages, stdev_attentions, color = 'red', marker = 'o', label = 'Standard Deviation')
+        plt.xlabel('Avg Shortest Path')
+        plt.ylabel('Avg Attention Weight')
+        plt.title(f'Average Attention Weight by LCC Shortest Path \n for {disease} Largest Connected Component')
+        plt.legend(loc='upper right', bbox_to_anchor=(0, 0.2), ncol=1)
+        plt.tight_layout()
+        plt.savefig('hopPlot.png')
+        
+    # Shows some top attention weights
     sorted_weights = sorted(
       [(key, subkey, value) for key, subdict in attention_dict.items() for subkey, value in subdict.items()],
       key=lambda x: x[2], reverse = True
     )
 
     for rank, (key, gene, value) in enumerate(sorted_weights[:top_weights], start=1):
-        
         print(f"Top {rank} largest connected weight from {key} to {gene}: {value}")
-        print(f'Hop distance: {hop_distance}')
         print('-' * 30)
 
 # Checks the top attentions of a mapped PPI 
@@ -897,9 +989,10 @@ def check_top_attentions(attention_dict, PPI, top_number = None, make_range = Tr
                       for inner_key, value in inner_dict.items()]
     sorted_tuples = sorted(flattened_dict, key=lambda x: x[2], reverse=True)
     
+    # Sets top number of weights to use if not specified
     if top_number == None:
         top_number = int(len(sorted_tuples))
-        
+
     # Calculates overall ratio of total nodes within PPI 
     background_attention_ratio = len(PPI.edges())/len(flattened_dict)
     print(f'Proportion of total nodes within PPI: {background_attention_ratio}')
@@ -948,38 +1041,48 @@ def check_top_attentions(attention_dict, PPI, top_number = None, make_range = Tr
         plt.title('Cumulative Density Function of Proportion of PPI Edges \n Present in Top Attention Weights')
         plt.xlabel('Number of top nodes')
         plt.ylabel('Cumulative Proportion in PPI')
-        #plt.yscale('log')
-        #plt.xscale('log')
         plt.plot([i for i in range(1, top_number + 1)], cdf, linestyle='-', label = 'CDF')
         plt.plot([i for i in range(1, top_number + 1)], background_ratio, label = 'Background Expected', color = 'red')
         plt.legend()
         plt.tight_layout()
         plt.savefig('TopPPI_CDF.png')
         
+        # Calculate log CDF
+        plt.figure()
+        plt.title('Cumulative Density Function of Proportion of PPI Edges \n Present in Top Attention Weights')
+        plt.xlabel('Number of top nodes')
+        plt.ylabel('Cumulative Proportion in PPI')
+        plt.yscale('log')
+        plt.xscale('log')
+        plt.plot([i for i in range(1, top_number + 1)], cdf, linestyle='-', label = 'CDF')
+        plt.plot([i for i in range(1, top_number + 1)], background_ratio, label = 'Background Expected', color = 'red')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('TopPPI_CDF_log.png')
+
         print(f'Proportion of top {top_number} attention weights within the PPI: {PPI_ratio}')
 
     return PPI_ratio
     
 # Merges a list of dictionaries together
-def merge_dictionaries(dictionaries, mean = False):
+def merge_dictionaries(dictionaries, mean = True):
 
     if mean == True:
         merged_dict =  defaultdict(lambda: defaultdict(list))
     else:
         merged_dict =  defaultdict(lambda: defaultdict(int))
-        
+    
     for attention_dict in tqdm.tqdm(dictionaries, total = len(dictionaries), desc = 'Combining dictionaries'):
         try:
             attention_dict = pk.load(open(attention_dict, 'rb'))
         except:
-            #print(traceback.format_exc())
             pass
-            
+        
         if mean == True:
             for key in attention_dict.keys():
                 subdict = attention_dict[key]
                 for sub_key in subdict.keys():
-                    merged_dict[key][sub_key].append(subdict[sub_key])
+                    merged_dict[key][sub_key].extend(subdict[sub_key])
         else:
             for key in attention_dict.keys():
                 subdict = attention_dict[key]
@@ -990,12 +1093,23 @@ def merge_dictionaries(dictionaries, mean = False):
         for key in merged_dict.keys():
             sub_dict = merged_dict[key]
             for sub_key in sub_dict.keys():
-                sub_dict[sub_key] = sum(sub_dict[sub_key])/len(sub_dict[sub_key])
-                
+
+                # Extract the values and counts from the tuples
+                print(counts)
+                print(values)
+                counts, values = zip(*sub_dict[sub_key])
+        
+                # Create a normalized list by repeating each value based on its count
+                normalized_list = np.repeat(values, counts)
+
+                # Calculate the mean of the normalized list
+                mean = np.mean(normalized_list)
+                sub_dict[sub_key] = np.mean(normalized_list)
+            sys.exit()
     return dict(merged_dict)
     
 # Creates a new PPI from the top Geneformer attention weights
-def generate_PPI(attention_dict, attention_threshold = 0.005, gene_conversion = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl"), save = False,
+def generate_PPI(attention_dict, attention_threshold = None, gene_conversion = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl"), save = False,
                   savename = 'Attention_PPI.csv'):
         
     # Creates conversion from tokens back to genes
@@ -1007,10 +1121,16 @@ def generate_PPI(attention_dict, attention_threshold = 0.005, gene_conversion = 
     # Obtains flattened gene-gene attention collection
     flattened_dict = [(outer_key, inner_key, value)
                       for outer_key, inner_dict in attention_dict.items()
-                      for inner_key, value in inner_dict.items()]
+                      for inner_key, value in inner_dict.items() if not isinstance(value, list)]
     sorted_tuples = sorted(flattened_dict, key=lambda x: x[2], reverse=True)
     
-    # Filters connections for attentions above the threshold
+    # If no specific threshold set, calculates a threshold equivalent to > mean + standard deviation
+    if attention_threshold == None:
+        mean = sum(flattened_dict)/len(flattened_dict)
+        std = statistics.stdev(flattened_dict)
+        attention_threshold = mean + std
+        
+    # Filters connections for attentions above the threshold  
     original_length = len(sorted_tuples)
     sorted_tuples = [i for i in sorted_tuples if i[2] >= attention_threshold]
     new_length = len(sorted_tuples)

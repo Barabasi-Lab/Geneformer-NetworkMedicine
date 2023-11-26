@@ -10,7 +10,7 @@ import numpy as np
 
 # Obtains disease genes from a csv file containing disease gene mappings
 def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/GDA_Filtered_04042022.csv'), 
-                          column_name = 'NewName', gene_column_name = 'HGNC_Symbol'):
+                          column_name = 'NewName', gene_column_name = 'HGNC_Symbol', filter_DisGeNET = True):
     '''
     FUNCTION
     Returns a list of genes with a given disease (or other condition) from aa dataframe
@@ -26,7 +26,11 @@ def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneForm
             Name of the column that contains the diseases
 
         gene_column_name : string
-            Name of the column that contains genes 
+            Name of the column that contains genes
+
+        filter_DisGeNET : bool, default = False
+            If True, filters the disease gene list for only DisGeNET-indicated disease genes
+
     Outputs
     ----------------
         gene_list : list
@@ -34,6 +38,10 @@ def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneForm
         
     '''
     diseases = pl.read_csv(diseases)
+    
+    if filter_DisGeNET == True:
+        diseases = diseases.filter(diseases['evidence'].str.contains('DisGeNET'))
+
     filtered_dataframe = diseases.filter(diseases[column_name].str.contains(selected_disease.lower()))
     gene_list = list(filtered_dataframe[gene_column_name])
 
@@ -136,7 +144,7 @@ def neighbor_group(graph, nodes, LCC = None):
     return hop_groups
     
 # Compares two generated graphs
-def compare_networks(old_PPI, new_PPI):
+def compare_networks(old_PPI, new_PPI, LCC = None):
     shared_edges = 0
     total_edges = 0
     
@@ -184,6 +192,26 @@ def compare_networks(old_PPI, new_PPI):
     old_moment = nth_moment_v2(old_PPI, 2)
     new_moment = nth_moment_v2(new_PPI, 2)
     print(f'PPI second moment: {old_moment}, GF PPI second moment: {new_moment}')
+
+    if LCC:
+        # Identify the LCC in the old PPI
+        lcc_nodes = set(max(nx.connected_components(old_PPI), key=len))
+        lcc_edges = old_PPI.subgraph(lcc_nodes).edges()
+
+        # Check node and edge preservation in the new PPI
+        preserved_nodes = lcc_nodes.intersection(set(new_PPI.nodes()))
+        preserved_edges = set()
+        for edge in lcc_edges:
+            if new_PPI.has_edge(*edge) or new_PPI.has_edge(edge[1], edge[0]):
+                preserved_edges.add(edge)
+
+        # Calculate the preservation percentages
+        node_preservation = len(preserved_nodes) / len(lcc_nodes) if lcc_nodes else 0
+        edge_preservation = len(preserved_edges) / len(lcc_edges) if lcc_edges else 0
+
+        print(f'LCC Node Preservation: {node_preservation}')
+        print(f'LCC Edge Preservation: {edge_preservation}')
+
     
 
         
