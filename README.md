@@ -21,7 +21,7 @@ The primary function for running analysis is format_sci.
 * noise : float, default None. If set to a float, noise will be applied to the data.
 
 ## Attention Extraction
-Geneformer_classes.py contains examples on how to use the perturber and attention extractor for various purposes, located at the bottom of the file (in the main runtime). 
+Perturber.py contains the primary gene perturbation class.
 
 Example perturber workflow:
 
@@ -29,7 +29,9 @@ Example perturber workflow:
     pert.create_disease_outside_test(disease = 'Cardiomyopathy Hypertrophic', samples_per_label = 5,) # Calculates LCC, genes one hop away from LCC, then genes one hop away from the 1 hop genes not in the LCC, then random genes. Selects samples_per_label genes. 
     pert.run_perturbation() # Runs perturbation filtration + analysis
     pert.visualize_similarities() # Visualizes box plot of results
-        
+
+Attentions.py contains the primary attention extraction and analysis class
+
 Example attention extraction workflow: 
 
     new_attention = PPI_attention(layer_index = 4, mean = True)  # Uses either mean or maximum (if set to False) to aggregate weights
