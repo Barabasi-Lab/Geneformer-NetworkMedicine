@@ -6,12 +6,12 @@ This repository contains aggregated code for testing out various functionalities
 2. Create a new conda environment, specifying python 3.11
 
    ```conda create --name <environment name> python=3.11```
-        conda activate <environment name>
+   ```conda activate <environment name>```
     
 3. Clone the repository into your working directory
 4. Install the requirements with the requirements.txt file
 
-        pip install -r requirements.txt 
+   ```pip install -r requirements.txt```
 
 # Modules
 ## Geneformer drug prediction
