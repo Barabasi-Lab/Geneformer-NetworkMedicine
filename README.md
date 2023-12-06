@@ -5,7 +5,7 @@ This repository contains aggregated code for testing out various functionalities
 1. Install the latest version of conda
 2. Create a new conda environment, specifying python 3.11
 
-        conda create --name <environment name> python=3.11
+   ```conda create --name <environment name> python=3.11```
         conda activate <environment name>
     
 3. Clone the repository into your working directory
