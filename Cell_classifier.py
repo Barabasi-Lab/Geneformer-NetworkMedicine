@@ -2,7 +2,6 @@
 import tqdm
 import sys
 import polars as pl
-import pysam
 import os
 from datasets import Dataset
 from collections import Counter
@@ -14,17 +13,19 @@ import seaborn as sns; sns.set()
 from datasets import load_from_disk
 import fastcluster
 from sklearn.metrics import accuracy_score, f1_score
-from transformers import BertForSequenceClassification
-from transformers import Trainer
+from transformers import BertForSequenceClassification, BertConfig, Trainer
 from transformers.training_args import TrainingArguments
-from geneformer import DataCollatorForCellClassification, EmbExtractor
+from geneformer import DataCollatorForCellClassification, EmbExtractor, TranscriptomeTokenizer
 import pickle
-from sklearn.metrics import roc_curve, roc_auc_score
+from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve,  confusion_matrix
+from sklearn.metrics import auc as precision_auc
 from sklearn.preprocessing import label_binarize
 import pyarrow as pa
 import concurrent.futures
 from matplotlib import pyplot as plt
 import torch
+import torch.nn as nn
+import torch.fft as fft
 import torch.nn.functional as F
 from scipy.stats import ranksums
 import ray
@@ -33,6 +34,10 @@ from ray import tune
 from ray.tune import ExperimentAnalysis
 from ray.tune.search.hyperopt import HyperOptSearch
 import numpy as np
+import pickle as pk
+#random.seed(42)
+#torch.manual_seed(42)
+#np.random.seed(42)
 
 # Properly sets up NCCV environment
 GPU_NUMBER = [i for i in range(torch.cuda.device_count())] 
@@ -41,7 +46,7 @@ os.environ["NCCL_DEBUG"] = "INFO"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Function for generating a ROC curve from data
-def ROC(prediction, truth, type = 'GeneFormer', label = ''):
+def ROC(prediction, truth, type = 'GeneFormer', label = '', save = False):
    
     fpr, tpr, _ = roc_curve(truth, prediction[:, 1])
     auc = roc_auc_score(truth, prediction[:, 1])
@@ -51,7 +56,9 @@ def ROC(prediction, truth, type = 'GeneFormer', label = ''):
     plt.xlabel('False Positive Rate')
     plt.title(f'{label} ROC Curve')
     plt.legend(loc=4)
-    plt.savefig('ROC.png')
+    
+    if save == True:
+        plt.savefig('ROC.png')
     
     return tpr, fpr, auc 
                
@@ -212,7 +219,7 @@ Runs cell-level classification and embedding extraction with Geneformer
 '''
 
 def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_set = Path('geneformer/gene_median_dictionary.pkl'), pretrained_model = ".",
-          dataset = 'Genecorpus-30M/example_input_files/cell_classification/cell_type_annotation/cell_type_train_data.dataset/', dataset_split = None, filter_cells = .005, epochs = 1, cpu_cores = os.cpu_count(), geneformer_batch_size = 12, optimizer = 'adamw', max_lr = 5e-5, num_gpus = torch.cuda.device_count(), max_input_size = 2 ** 11, lr_schedule_fn = "linear", warmup_steps = 500, freeze_layers = 0, emb_extract = False, max_cells = 1000, emb_layer = 0, emb_filter = None, emb_dir = 'embeddings', overwrite = True, label = "cell_type", data_filter = None,
+          dataset = 'Genecorpus-30M/example_input_files/cell_classification/cell_type_annotation/cell_type_train_data.dataset/', dataset_split = None, filter_cells = .005, epochs = 1, cpu_cores = os.cpu_count(), geneformer_batch_size = 12, optimizer = 'adamw', max_lr = 5e-5, num_gpus = torch.cuda.device_count(), max_input_size = 2 ** 11, lr_schedule_fn = "linear", warmup_steps = 500, freeze_layers = 0, emb_extract = False, max_cells = 1000, emb_layer = 0, emb_filter = None, emb_dir = 'embeddings', overwrite = True, label = "cell_type", data_filter = None, ROC_curve = True,
           forward_batch = 200, model_location = None, skip_training = False, sample_data = 1, inference = False, optimize_hyperparameters = False, output_dir = None):
     
     '''
@@ -370,8 +377,8 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                 labeled_trainset = trainset_label_shuffled.map(classes_to_ids, num_proc=cpu_cores)
                 
                 # create 80/20 train/eval splits
-                labeled_train_split = labeled_trainset.select([i for i in range(0,round(len(labeled_trainset)*0.8))])
-                labeled_eval_split = labeled_trainset.select([i for i in range(round(len(labeled_trainset)*0.8),len(labeled_trainset))])
+                labeled_train_split = labeled_trainset.select([i for i in labeled_trainset if i['train'] == 1])
+                labeled_eval_split = labeled_trainset.select([i for i in labeled_trainset if i['train'] == 0])
                 
                 # filter dataset for cell types in corresponding training set
                 trained_labels = list(Counter(labeled_train_split["label"]).keys())
@@ -457,6 +464,8 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                     # train the cell type classifier
                     trainer.train()
                     predictions = trainer.predict(label_evalset)
+                    print(f'accuracy: {accuracy_score(predictions.argmax(), label_evalset["labels"])}') 
+                    
                     tpr, fpr, auc = ROC(predictions.predictions, true_labels)
                     
                     metrics = compute_metrics(predictions)
@@ -536,6 +545,7 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
              
                     
         else:
+     
              trainset_label = train_dataset
              label_counter = Counter(trainset_label[label])
              total_cells = sum(label_counter.values())
@@ -545,7 +555,7 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
              trainset_label_subset = trainset_label.filter(if_not_rare_celltype, num_proc=cpu_cores)
              
              # shuffle datasets and rename columns
-             trainset_label_shuffled = trainset_label_subset.shuffle(seed=42)
+             trainset_label_shuffled = trainset_label_subset.shuffle() #seed = 42
              trainset_label_shuffled = trainset_label_shuffled.rename_column(label,"label")
     
              # create dictionary of cell types : label ids
@@ -555,9 +565,22 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
              
              labeled_trainset = trainset_label_shuffled.map(classes_to_ids, num_proc=cpu_cores)
              
-             # create 80/20 train/eval splits
-             labeled_train_split = labeled_trainset.select([i for i in range(0,round(len(labeled_trainset)*0.8))]) 
-             labeled_eval_split = labeled_trainset.select([i for i in range(round(len(labeled_trainset)*0.8),len(labeled_trainset))])
+             try:
+                 def filter_train(example):
+                    return example['train'] == 1
+                    
+                 def filter_test(example):
+                    return example['train'] == 0
+                    
+                 labeled_train_split = labeled_trainset.filter(filter_train)
+                 labeled_eval_split = labeled_trainset.filter(filter_test)
+
+             except:
+             
+                 # create 80/20 train/eval splits
+                 labeled_train_split = labeled_trainset.select([i for i in range(0,round(len(labeled_trainset)*0.8))]) 
+                 labeled_eval_split = labeled_trainset.select([i for i in range(round(len(labeled_trainset)*0.8),len(labeled_trainset))])
+    
              
              # filter dataset for cell types in corresponding training set
              trained_labels = list(Counter(labeled_train_split["label"]).keys())
@@ -565,12 +588,60 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
             
              # set logging steps
              logging_steps = round(len(trainset_label)/geneformer_batch_size/10)
-                
+             
+             
              # reload pretrained model
              model = BertForSequenceClassification.from_pretrained(pretrained_model, 
-                                                                      num_labels=len(target_dict_list.keys()),
+                                                                      num_labels=len(list(set(trained_labels))),
                                                                       output_attentions = False,
-                                                                      output_hidden_states = False).to(device)  
+                                                                      output_hidden_states = False).to(device).train() 
+             
+             '''
+             START
+            
+             import pandas as pd
+             import networkx as nx
+             
+             PPI = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/PPI_2022_2022-04-21.csv')
+             gene_conversion = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl")
+             tokens = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/token_dictionary.pkl")
+                  
+             # Creates conversion from genes to tokens
+             token_dict = TranscriptomeTokenizer().gene_token_dict
+             token_dict = {value: key for key, value in token_dict.items()}
+             conversion = {value: key for key, value in pk.load(open(gene_conversion, 'rb')).items()}
+             conversion = {conversion[value]:key for key, value in token_dict.items() if value in conversion}
+        
+             # Loads PPI
+             try:
+                 PPI = pd.read_csv(PPI).drop(columns = ['Source'])
+                 PPI = PPI.rename(columns = {'HGNC_Symbol.1':'source', 'HGNC_Symbol.2':'target'})
+             except:
+                 PPI = pd.read_table(PPI)[['source', 'target']]
+             PPI = nx.from_pandas_edgelist(PPI)
+             PPI = PPI.subgraph(conversion)
+         
+             # Get embeddings for each node in the graph
+             try:
+                 embeddings = pk.load(open('Training_Datasets/embeddings.pk', 'rb'))
+             except:
+                 # Embeds structure with Node2Vec
+                 node2vec = Node2Vec(PPI, dimensions=dimensions, walk_length=walk_length, num_walks=num_walks, workers=workers)
+                 node_model = node2vec.fit(window=5, min_count=1, batch_words=4)
+                 embeddings = {node: node_model.wv[node] for node in PPI.nodes()}
+                 pk.dump(embeddings, open('Training_Datasets/embeddings.pk', 'wb'))
+        
+
+             # Customize Token Embeddings
+             bert_embeddings = model.get_input_embeddings()
+             for node, embedding in embeddings.items():
+                 token_id = conversion[node]
+                 if token_id is not None:
+                     bert_embeddings.weight.data[token_id] = torch.tensor(embedding, dtype=torch.float)
+
+             END
+             '''
+                           
              # define output directory path
              current_date = datetime.datetime.now()
              datestamp = f"{str(current_date.year)[-2:]}{current_date.month:02d}{current_date.day:02d}"
@@ -624,6 +695,10 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                  # train the cell type classifier
                  trainer.train()
                  predictions = trainer.predict(labeled_eval_split_subset)
+             
+                 predictions_tensor = torch.Tensor(predictions.predictions)
+                 predicted_labels = torch.argmax(predictions_tensor, dim=1)
+                 print(f'accuracy: {accuracy_score(labeled_eval_split_subset["label"], predicted_labels)}') 
                  
                  metrics = compute_metrics(predictions)
                  
@@ -632,14 +707,48 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                      
                  trainer.save_metrics("eval",predictions.metrics)
                  trainer.save_model(output_dir)
-                 
+           
                  # Saves label conversion dictionary to output directory
                  with open(f'{output_dir}/targets.txt', 'w') as f:
                      f.write(str(target_dict_list))
                  
-                 
-                 tpr, fpr, auc = ROC(predictions.predictions, true_labels)
-                 return tpr, fpr, auc  # Remove if necessary
+                 try:
+                     if ROC_curve == True:
+                         # Calculates ROC curve
+                         fpr, tpr, auc = ROC(predictions.predictions, true_labels) 
+                         #print(f'Geneformer AUC: {auc}')
+                         
+                         return fpr, tpr, auc
+                     else:
+                     
+                         # Generate confusion matrix
+                         conf_matrix = confusion_matrix(labeled_eval_split_subset["label"], predicted_labels)
+                        
+                         # Define class names
+                         class_names = ['mtx', 'pred']
+                        
+                         # Calculate class-wise accuracy
+                         class_accuracy = np.diag(conf_matrix) / conf_matrix.sum(axis=1) * 100  # Calculate accuracy in percentage
+                        
+                         # Create a heatmap with proportions
+                         plt.figure(figsize=(8, 6))
+                         sns.heatmap(conf_matrix / conf_matrix.sum(axis=1)[:, np.newaxis] * 100, annot=True, fmt='.1f', cmap='coolwarm', 
+                                    xticklabels=class_names, yticklabels=class_names)  # Display percentages with one decimal point
+                         plt.xlabel('Predicted')
+                         plt.ylabel('Actual')
+                         plt.title('Confusion Matrix (Percentages)')
+                         
+                         plt.savefig('GF_confusion.png')
+               
+                             
+                         precision, recall, _ = precision_recall_curve(labeled_eval_split_subset["label"], predictions.predictions[:, 1])
+                         pr_auc = precision_auc(sorted(recall), sorted(precision))
+                     
+                         print(f'AUC: {pr_auc}')
+                         
+                         return recall, precision, pr_auc 
+                 except:
+                     pass    
                   
              else:
                  # Optimizes hyperparameters
@@ -737,6 +846,7 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
         inputs = torch.zeros(len(input_ids), max_input_size, dtype=torch.int64)
         attention = torch.zeros(len(input_ids), max_input_size, dtype=torch.int64)
         
+        outputs = []
         for i, sentence in enumerate(input_ids):
             sentence_length = len(sentence)
             if sentence_length <= max_input_size:
@@ -746,10 +856,33 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                 inputs[i, :] = torch.tensor(sentence[:max_input_size])
                 attention[i, :] = torch.ones(max_input_size)
         
+        # Split inputs and attention_mask tensors into batches
+        num_batches = len(inputs) // geneformer_batch_size
         model = BertForSequenceClassification.from_pretrained(model_location, num_labels=len(target_dict_list)).to(device)   
-        model_outputs = model(inputs.to(device), attention_mask = attention)["logits"]     
-        predictions = F.softmax(model_outputs, dim = -1).argmax(-1)
-
+        for i in range(num_batches):
+            start_idx = i * geneformer_batch_size
+            end_idx = (i + 1) * geneformer_batch_size
+            
+            inputs_batch = inputs[start_idx:end_idx].to(device)
+            attention_mask_batch = attention[start_idx:end_idx].to(device)
+            
+            # Forward pass for the batched inputs
+            model_outputs = model(inputs_batch, attention_mask=attention_mask_batch)["logits"]
+            outputs.extend(model_outputs)
+          
+        
+        # Handle the remaining samples (if any) that don't form a complete batch
+        if len(inputs) % batch_size != 0:
+            start_idx = num_batches * batch_size
+            inputs_batch = inputs[start_idx:].to(device)
+            attention_mask_batch = attention_mask[start_idx:].to(device)
+            
+            # Forward pass for the remaining samples
+            model_outputs = model(inputs_batch, attention_mask=attention_mask_batch)["logits"]
+            outputs.extend(model_outputs)
+        
+   
+        predictions = F.softmax(outputs, dim = -1).argmax(-1)
         predictions = [target_dict_list[int(pred)] for pred in predictions]
 
         return predictions
@@ -764,6 +897,7 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                 data = data[indexer]
                 
             target_dict_list = {key:value for key, value in enumerate(data)}
+            total_filter = None
         else:
             total_filter = emb_filter
         
@@ -815,7 +949,7 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                 sim = similarity(emb_dict[key], embedding, cosine = True)
                 
                 similarities[key][k] = sim
-        
+       
         plot_similarity_heatmap(similarities)
         
         embex.plot_embs(embs=embs, 
@@ -827,11 +961,10 @@ def finetune_cells(token_set = Path('geneformer/token_dictionary.pkl'), median_s
                 plot_style="heatmap",
                 output_directory=emb_dir,  
                 output_prefix="emb_plot")
-       
+        
         return similarities
       
 if __name__ == '__main__':
-    predictions =  finetune_cells(skip_training = False, dataset_split = None, label = "disease", sample_data = 1, data_filter = 'hcm', epochs = 10, output_dir = 'hcm_model', model_location = 'hcm_model', 
-                            emb_extract = True, geneformer_batch_size = 12, inference = False, dataset = "./Genecorpus-30M/example_input_files/cell_classification/disease_classification/human_dcm_hcm_nf.dataset/")
-
+    predictions =  finetune_cells(skip_training = False, dataset_split = None, label = "disease", sample_data = .25, data_filter = 'hcm', epochs = 25, output_dir = 'hcm_model', model_location = 'hcm_model', 
+                            emb_extract = False, geneformer_batch_size = 9, inference = True, dataset = "/work/ccnr/GeneFormer/GeneFormer_repo/Genecorpus-30M/example_input_files/cell_classification/disease_classification/human_dcm_hcm_nf.dataset/")
     
