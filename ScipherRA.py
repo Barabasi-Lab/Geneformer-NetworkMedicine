@@ -58,7 +58,7 @@ def normalize_data(data, polars = False, round_data = False):
 
     data_columns = data.columns
     read_counts = []
-    
+
     if polars == False:
         for _, row in data.iterrows():
             read_counts.append(sum(row[:-1]))
@@ -68,7 +68,6 @@ def normalize_data(data, polars = False, round_data = False):
 
     read_mean = sum(read_counts) / len(read_counts)
 
-    
     read_multipliers = [read / read_mean for read in read_counts]
     normal_data = []
     
@@ -531,22 +530,25 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
 # Define your custom dataset class
 # .save_to_disk() method used to dataset
 class CellData(Dataset):
-    def __init__(self, test, train, data_split = None, label = "cell_type", ID = 'ENSEMBL'):
-        self.label = label
-        
-        # Uses a train/test split if provided, otherwise creates the test split if only a test value is provided
+    def __init__(self, test = None, train = None, data_split = None, label = "cell_type", ID = 'ENSEMBL'):
         try:
-            if train:
-                pass
-            data, ranked_genes = self.convert(test, label, ID, train_test_labels = None)
+            self.label = label
             
+            # Uses a train/test split if provided, otherwise creates the test split if only a test value is provided
+            try:
+                if train:
+                    pass
+                data, ranked_genes = self.convert(test, label, ID, train_test_labels = None)
+                
+            except:
+                train_test_labels = [1 for _ in range(len(train))] + [0 for _ in range(len(test))]
+                data = pl.concat((train, test), how = 'vertical')
+                data, ranked_genes = self.convert(data, label, ID, train_test_labels)
+                
+            self.ranked_genes = ranked_genes
+            super().__init__(data)
         except:
-            train_test_labels = [1 for _ in range(len(train))] + [0 for _ in range(len(test))]
-            data = pl.concat((train, test), how = 'vertical')
-            data, ranked_genes = self.convert(data, label, ID, train_test_labels)
-            
-        self.ranked_genes = ranked_genes
-        super().__init__(data)
+            pass
         
     def convert(self, data, label, ID, train_test_labels, count_id = 'expression', gene_id = "genes", GF_limit = 2048):
         tokens = TranscriptomeTokenizer()
@@ -570,6 +572,7 @@ class CellData(Dataset):
         
         for row in expression.iter_rows():
             gexp = {genes[i]:exp for i, exp in enumerate(row[:-1])}
+        
             for num, key in enumerate(list(gexp.keys())):
                 try:
                     gexp[key] /= (median_dict[key] * gene_counts[key])
@@ -667,7 +670,6 @@ class CellData(Dataset):
                 
         Chembl = []
 
-        reverse_dict = {}
         for set_num, set in enumerate(converted_set):
             Chembl.append([])
             for gene in set:
@@ -696,9 +698,11 @@ def format_sci(data,
                gene_conversion = Path("geneformer/gene_name_id_dict.pkl"), 
                target_label = "RA", 
                GF_samples = 20000, 
-               save_file = 'Stats.png', 
                equalize = True,
-               finetuned_model_location = 'Geneformer-finetuned'):
+               save_img = 'Scipher_Roc_data.png',
+               ensembl_convert = True,
+               epochs = 50):
+               
     '''
     KEY FUNCTION PARAMETERS
     ------------------------------------------
@@ -731,6 +735,9 @@ def format_sci(data,
     
     finetuned_model_location : str, default = 'Geneformer-finetuned'
         Location where the finetuned model weights are saved
+
+    epochs : int
+        Number of epochs to train Geneformer
     '''
     
     cols = []
@@ -740,38 +747,31 @@ def format_sci(data,
     token_dict = pk.load(open(token_dictionary, 'rb'))
     gene_dict = pk.load(open(gene_conversion, 'rb'))
     
-    # Scipher data pre-processing
-    if 'das28crp_cat' in data.columns:
-    
+    if ensembl_convert == True:
+        # Converts from gene symbol to ensembl ID
         for column in data.columns:
-            if ':' in column:
-                ensembl = column.split(':')[1]
-                try:
-                    token_dict[ensembl]
-                except:
-                    continue
-            else:
-                try:
-                    ensembl = gene_dict[column.strip()]
-                except:
-                    continue
+            try:
+                ensembl = gene_dict[column.strip()]
+            except:
+                continue
+            try:
+                token_dict[ensembl]
+            except:
+                continue
             cols.append(column)
             conversion[column] = ensembl
 
-
-        labels = data['das28crp_cat']
-        labels = [0 if key == 'Remission' else 1 for key in labels]
-        data = pl.concat([data, pl.DataFrame({target_label:labels})], how="horizontal")
         keep = cols + [target_label]
         data = data.select(keep)
         data = data.rename(conversion)
- 
+
     # Normalizes individual samples to total read count
     data = normalize_data(data, polars = True, round_data = False)
     data = data.sample(fraction = 1.0, shuffle = True)
     
     if equalize == True:
         data = equalize_data(data)
+
     labels = [int(i) for i in list(data[target_label])]
     data = data.sample(fraction = 1.0, shuffle = True)
      
@@ -787,19 +787,20 @@ def format_sci(data,
     if noise:
       data = add_noise(data, noise = noise)
       data = data.sample(fraction = 1.0, shuffle = True)
-
+ 
     # Converts data to GF-applicable format
     try:
         cell_data = CellData(train = augmented_data, test = data, label = target_label)
     except:
         cell_data = CellData(train = None, test = data, label = target_label)
+
     cell_data.save_to_disk(save)
-    
-    # If you want to load data instead of creating data for GeneFormer (for replicability), move the 2 lines of save code below to the prior section. To load the dataset, use the bottom line of code
-    #with open(save, 'wb') as f:
-        #pickle.dump(cell_data, save)
-    #cell_data = pickle.load(open(save, 'rb'))
-    
+    '''
+    # If you want to load data instead of creating data for GeneFormer (for replicability), move the 2 lines of save code below to the prior section. 
+    cell_data = CellData()
+    cell_data.load_from_disk(save)
+    '''
+
     # Selects only genes that are exposed to GeneFormer
     data = data.select(cell_data.ranked_genes + [target_label])
     #augmented_data = augmented_data.select(cell_data.ranked_genes + [target_label])
@@ -807,7 +808,7 @@ def format_sci(data,
     
     if PR == True:
         # Calculates TPR and FPR for GeneFormer
-        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = save, epochs = 30, geneformer_batch_size = 9,
+        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = save, epochs = epochs, geneformer_batch_size = 9,
             skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'GF-finetuned', ROC_curve = False)
         
         # Calculates TPR and FPR for ensemble models
@@ -839,8 +840,8 @@ def format_sci(data,
     
     else:
         # Calculates ROC curve for GeneFormer
-        fpr4, tpr4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = 50, geneformer_batch_size = 9,
-            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 0, output_dir = 'GF-finetuned')
+        fpr4, tpr4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = 'Scipher.dataset', epochs = epochs, geneformer_batch_size = 12,
+            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'GF-finetuned')
             
         try:
             fpr3, tpr3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False)
@@ -911,7 +912,7 @@ def shuffle_labels(data, label = 'RA', fraction = 1):
     return data
 
 # Feed-forward network testing
-def FFN(train_data, test_data, epochs = 100, total_samples = 3000, test_size = .2, noise = .25, augment = True, ROC = True):
+def FFN(train_data, test_data, epochs = 20, total_samples = 3000, test_size = .2, noise = .25, augment = True, ROC = True):
     
     try:
         if train_data.is_empty():
@@ -1179,9 +1180,13 @@ def get_arguments():
     
 if __name__ == '__main__':
     args = get_arguments()
-    if 'cancer' not in args.type:
-        format_sci(data = Path("GSE97810.csv"), save_file = 'RAROC.svg', save = 'Scipher.dataset', equalize = True) #"Enzo_dataset2.csv" 'enzo/RAmap.csv'
+    if 'arthritis' in args.type:
+        format_sci(data = Path("Training_Datasets/GSE97476_unique.csv"), save_img = 'RAROC.svg', save = 'Scipher.dataset', equalize = True) #"Enzo_dataset2.csv" 'enzo/RAmap.csv'
+    elif 'cancer' in args.type:
+        format_sci(data = Path("Training_Datasets/carcinoma.csv"), save_img = 'CancerROC.svg', save = 'Scipher.dataset', equalize = True) 
+    elif 'amd' in args.type:
+        format_sci(data = Path("Training_Datasets/AMD_frac.csv"), save_img = 'AMD_ROC.svg', 
+                   save = 'Scipher.dataset', equalize = True, epochs = 50) 
     else:
-        format_sci(data = Path("enzo/cancer/lungCancer.csv"), save_file = 'CancerROC.svg', save = 'Scipher.dataset', equalize = True) 
-
+        format_sci(data = Path("Training_Datasets/singleRA.csv"), save_img = 'ArtitROC.svg', save = 'Scipher.dataset', equalize = True) 
     
