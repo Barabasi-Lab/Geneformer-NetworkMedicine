@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Obtains disease genes from a csv file containing disease gene mappings
-def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/GDA_Filtered_04042022.csv'), 
+def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/GDA_Filtered_04042022.csv'), #PPI202207.txt
                           column_name = 'NewName', gene_column_name = 'HGNC_Symbol', filter_DisGeNET = True):
     '''
     FUNCTION
@@ -39,7 +39,7 @@ def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneForm
     '''
     diseases = pl.read_csv(diseases)
     
-    if filter_DisGeNET == True:
+    if filter_DisGeNET == True and selected_disease != 'covid':
         diseases = diseases.filter(diseases['evidence'].str.contains('DisGeNET'))
 
     filtered_dataframe = diseases.filter(diseases[column_name].str.contains(selected_disease.lower()))
@@ -47,24 +47,36 @@ def isolate_disease_genes(selected_disease, diseases = Path('/work/ccnr/GeneForm
 
     return gene_list
     
-# Obtains selected disease genes from a larger Protein-Protein Interaction network
-def LCC_genes(PPI, disease_genes, subgraph = True):
-
+def LCC_genes(PPI, disease_genes, subgraph=True, connect_non_LCC=True):
     # Obtains LCC
     sub = PPI.subgraph(disease_genes)
     largest_cc = max(nx.connected_components(sub), key=len)
-    nodes = list(largest_cc)
-    
-    # Returns a subgraph containing the LCC. Otherwise, returns a list of the nodes 
-    if subgraph == True:
-        LCC = PPI.subgraph(nodes)    
+    LCC_nodes = set(largest_cc)
 
-        return LCC
-    else:    
-        return nodes
+    if connect_non_LCC:
+        for gene in set(disease_genes) - LCC_nodes:
+            # Find the shortest path to any node in the LCC
+            shortest_path = None
+            for target in LCC_nodes:
+                try:
+                    path = nx.shortest_path(PPI, source=gene, target=target)
+                    if shortest_path is None or len(path) < len(shortest_path):
+                        shortest_path = path
+                except:
+                    continue
+            
+            # Add the nodes and edges from this path to the LCC
+            if shortest_path:
+                LCC_nodes.update(shortest_path)
+
+    # Return the subgraph or list of nodes depending on the 'subgraph' argument
+    if subgraph:
+        return PPI.subgraph(LCC_nodes)
+    else:
+        return list(LCC_nodes)
     
 # Maps gene embeddings to PPI
-def instantiate_ppi(PPI = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/PPI_2022_2022-04-21.csv'), 
+def instantiate_ppi(PPI = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/PPI_2022_2022-04-21.csv'), #Path('PPI/GRN.csv'), #Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/PPI_2022_2022-04-21.csv'), # Path('PPI/PPI202207.txt'),
                     gene_ids = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl"),
                     save = False):
 
@@ -72,11 +84,15 @@ def instantiate_ppi(PPI = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/PPI_20
     conversion = list(pk.load(open(gene_ids, 'rb')).keys())
     
     # Loads PPI using pandas
-    try:
-        PPI = pd.read_csv(PPI).drop(columns = ['Source'])
-        PPI = PPI.rename(columns = {'HGNC_Symbol.1':'source', 'HGNC_Symbol.2':'target'})
-    except:
-        PPI = pd.read_table(PPI)[['source', 'target']]
+    if '.txt' in str(PPI) or '.tsv' in str(PPI):
+        PPI = pd.read_table(PPI)
+    else:
+        try:
+            PPI = pd.read_csv(PPI).drop(columns = ['Source'])
+            PPI = PPI.rename(columns = {'HGNC_Symbol.1':'source', 'HGNC_Symbol.2':'target'})
+        except:
+            PPI = pd.read_csv(PPI)
+        
         
     # Converts PPI into networkx graph, than trims all nodes that cannot be converted
     PPI = nx.from_pandas_edgelist(PPI)

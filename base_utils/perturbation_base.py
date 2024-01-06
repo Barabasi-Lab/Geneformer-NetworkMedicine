@@ -9,6 +9,7 @@ import subprocess
 from collections import Counter, defaultdict
 from multiprocessing import Pool
 import multiprocessing 
+import traceback
 
 # Data processing/pre-processing/comparison imports
 import polars as pl
@@ -23,7 +24,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 # Torch/Geneformer imports
 from datasets import Dataset, concatenate_datasets, load_from_disk
-from transformers import BertForSequenceClassification
+from transformers import BertForSequenceClassification, BertForTokenClassification
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
 from geneformer import DataCollatorForCellClassification, EmbExtractor
@@ -176,7 +177,40 @@ def aggregate_similarities(true_labels, embs, samples_per_label, label):
                 #cosine_similarities[key] = similarities
             
     return cosine_similarities
-            
-           
+
+def generate_fake_embeddings(graph, num_embeddings, gene_embeddings, node_to_index):
+    graph = graph.copy()
+    # Prepares variables and progress bar
+    fake_edges = set()
+    nodes = list(graph.nodes())
+    fake_edges = []
+    pbar = tqdm.tqdm(total=num_embeddings, desc="Generating Fake Edges")
+    
+    # Iterates fake attentions until quota is matched
+    while len(fake_edges) < num_embeddings:
+    
+        # Randomly select two nodes
+        node1, node2 = random.sample(nodes, 2)
+       
+        # Ensure the selected nodes are not connected in the real graph
+        if not graph.has_edge(node1, node2) and node1 != node2:
+
+            # Ensure the edge is not already in the fake edges list
+            if (node1, node2) not in fake_edges and (node2, node1) not in fake_edges:          
+                try:
+                    emb1 = gene_embeddings[node1]
+                    emb2 = gene_embeddings[node2]
+                    sim = float(cosine_similarity(emb1[0], emb2[0]))
+                    fake_edges.append((node1, node2, sim))
+                except:
+                    continue
+                
+                pbar.update(1)
+    pbar.close()
+    
+    return fake_edges
+
+        
+        
         
             
