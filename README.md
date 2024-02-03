@@ -59,5 +59,9 @@ Example attention extraction workflow:
     new_attention.gen_attention_matrix(save = 'attentionMatrix.csv') # Saves the gene-gene attentions as a matrix with the given name
 
 ## Cell and Gene Classification
-The two files Cell_classifier.py and Gene_classifier.py contain modularized versions of Geneformer that are appropriate for running inference using Geneformer's sample classifier and gene classifier capabilities. For the Cell_classifier, the file takes a pyarrow-formatted tokenized dataset with specific labels, and fine-tunes the pre-trained Geneformer model against those labels, then running inference. There are options to extract the embeddings from samples and genes as well for downstream analysis and comparison. The Gene_classifier file takes a single csv file containing columns of ENSEMBL gene IDs pertraining to different labels (for example, coding vs non-coding), and the model then pretrains itself on a selected subset of randomly sampled genes from the pre-training corpus and learns the relationships of the gene embeddings to the label. Both these files are highly modular and provide an example implementation of Geneformer when working with variable data. 
+The two files Cell_classifier.py and Gene_classifier.py contain modularized versions of Geneformer that are appropriate for running inference using Geneformer's sample classifier and gene classifier capabilities.
+
+For the Cell_classifier, the file takes a pyarrow-formatted tokenized dataset with specific labels, and fine-tunes the pre-trained Geneformer model against those labels, then running inference. There are options to extract the embeddings from samples and genes as well for downstream analysis and comparison. The Gene_classifier file takes a single csv file containing columns of ENSEMBL gene IDs pertraining to different labels (for example, coding vs non-coding), and the model then pretrains itself on a selected subset of randomly sampled genes from the pre-training corpus and learns the relationships of the gene embeddings to the label. 
+
+Both these files are highly modular and provide an example implementation of Geneformer when working with variable data. 
 
