@@ -27,7 +27,6 @@ The primary function for running analysis is format_sci.
 **format_sci Parameters**:
 
 * data : Path, str. The path of the data csv file
-* save_file: str, defaut None. The title of the output png/svg file for ROC/TPR curves. If set to None, will not be saved.
 * PR : bool, default False. Whether the precision/recall (True) or RoC (False) should be used
 * equalize : bool, default True. Whether the labels should be equalized.
 * token_dictionary : Path, default Path('geneformer/token_dictionary.pkl'). Path to token conversion pickled dictionary.
