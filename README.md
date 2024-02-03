@@ -16,7 +16,7 @@ This repository contains aggregated code for applying the internal model states 
 
 # Modules
 ## Geneformer drug prediction
-ScipherRA.py contains functionality for analyzing labelled genomic datasets with Geneformer, as well as comparing the predictive power of the trained model against several comparison methods such as a feed-forward network, a random forest classifier, and a support vector machine classifier.
+GF_Bulk.py contains functionality for analyzing labelled genomic datasets with Geneformer, as well as comparing the predictive power of the trained model against several comparison methods such as a feed-forward network, a random forest classifier, and a support vector machine classifier.
 
 The file contains a custom dataset (CellData) which  is an extension of the huggingface tokenized pyarrow dataset. The dataset initialization takes either a polars test dataset containing rows of samples and columns of genes, or a train and test polars dataset, which are appropriately labelled
 
