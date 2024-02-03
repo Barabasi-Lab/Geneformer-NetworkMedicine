@@ -1,7 +1,9 @@
+# Package imports
 import os 
 import sys
 import time
 import tqdm
+import traceback
 import pickle as pk
 from pathlib import Path
 from datasets import Dataset
@@ -14,6 +16,7 @@ from scipy.stats import nbinom
 import itertools
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler, normalize
+import pandas as pd
 from sklearn.svm import SVC
 from scipy.optimize import minimize
 import statistics
@@ -33,6 +36,8 @@ import torch.optim as optim
 from sklearn.metrics import auc as skauc
 import copy
 import argparse
+
+# Torch device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def normalize_data(data, polars = False, round_data = False):
@@ -68,7 +73,7 @@ def normalize_data(data, polars = False, round_data = False):
 
     read_mean = sum(read_counts) / len(read_counts)
 
-    read_multipliers = [read / read_mean for read in read_counts]
+    read_multipliers = [read / read_mean if read_mean > 0 else 0 for read in read_counts]
     normal_data = []
     
     if polars == False:
@@ -81,6 +86,7 @@ def normalize_data(data, polars = False, round_data = False):
             
             normal_data.append(normal)
         data = pd.DataFrame(normal_data, columns=data_columns)
+
     else:
         for num, row in enumerate(data.iter_rows()):
             multiplier = read_multipliers[num]
@@ -264,40 +270,38 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
     if normalize == True:
         data = normalize_data(data, round_data = False, polars = polars)
             
+    # Negative binomial or GAN sample augmentation
     if augment_type.upper() == 'NBINOM':
+    
+        # Function for augmenting from a negative binomial distribution
         def augment_genes(column, data = data, samples = num_samples):
             if column == label:
                 return None
             exp = data[column]
-            mean = exp.sum() / length
+            mean = exp.sum() / len(exp)
             if mean > 0:
                 var = statistics.variance(exp)
                 try:
                     k = (mean ** 2) / (var - mean)
-                    
+
                     if k <= 0:
                         std = statistics.stdev(exp)
-                        #generated_values = [0 for _ in range(samples)]
-                        generated_values = np.rint([i if i > 0 else 0 for i in np.random.normal(mean, std, samples)]).astype(np.int64)
-                        #generated_values = np.rint([i if i >= 0 else 0 for i in np.random.uniform(min(exp), max(exp), samples)]).astype(np.int64)
+                        generated_values = [i if i > 0 else 0 for i in np.random.normal(mean, std, samples)]
                     else:
                         p = k / (k + mean)
-                        #generated_values = np.rint([i if i >= 0 else 0 for i in np.random.uniform(min(exp), max(exp), samples)]).astype(np.int64)
-                        #generated_values = np.rint([i if i >= 0 else 0 for i in np.random.normal(mean, std, samples)]).astype(np.int64)
-                        generated_values = np.rint([i if i > 0 else 0 for i in nbinom.rvs(n=k, p=p, size=samples)]).astype(np.int64)
+                        generated_values = [i if i > 0 else 0 for i in nbinom.rvs(n=k, p=p, size=samples)]
                         
                 except ZeroDivisionError:
                     std = statistics.stdev(exp)
-                    #generated_values = [0 for _ in range(samples)]
-                    generated_values = np.rint([i if i > 0 else 0 for i in np.random.normal(mean, std, samples)]).astype(np.int64)
-                    #generated_values = np.rint([i if i >= 0 else 0 for i in np.random.uniform(min(exp), max(exp), samples)]).astype(np.int64)
+                    generated_values = [i if i > 0 else 0 for i in np.random.normal(mean, std, samples)]
                     
                 generated_values = list(generated_values)
             else:
                 generated_values = [0 for _ in range(samples)]
-
+           
             return generated_values
 
+        # Targets a specific label if all labels not amplified
         if selected_label != 'all':
             augmented_data = {}
             for column in tqdm.tqdm(data_columns, total = len(data_columns), 
@@ -341,7 +345,7 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
             else:
                 augmented_labels = pd.DataFrame.from_dict({label:augmented_labels})
         
-        augmented_data = {key:np.array(value).astype(np.int64) for key, value in augmented_data.items()}
+        augmented_data = {key:np.array(value) for key, value in augmented_data.items()}
        
         if polars == True:
             data = pl.concat([pl.DataFrame(augmented_data), augmented_labels], how = "horizontal")
@@ -350,7 +354,8 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
             data = pd.concat([
                 pd.DataFrame(augmented_data), 
                 augmented_labels
-            ], axis=1, ignore_index=False).astype('int64')
+            ], axis=1, ignore_index=False)
+     
      
     elif augment_type.upper() == 'GAN':
         try:
@@ -402,8 +407,8 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
             labels = list(set(data[label]))
             sample_subset = int(num_samples/len(labels))
 
+            # Loads and scales features
             if polars != True:
-                
                 for chosen_label in labels:
                     sample_numbers[chosen_label] = sample_subset - list(data[label]).count(chosen_label)
                     selected_X[chosen_label] =  data[data[label] == chosen_label].drop(label).to_numpy()
@@ -509,6 +514,7 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
                 except:
                     fake_samples = faked
 
+        # Combines generated labels with augmented data
         if polars == True:
             fake_samples = pl.DataFrame(fake_samples, schema = data_columns)
             data_numpy = np.rint(data.to_numpy())
@@ -530,24 +536,24 @@ def augment_data(data, num_samples, label = 'RA', selected_label = 0, epochs = 2
 # Define your custom dataset class
 # .save_to_disk() method used to dataset
 class CellData(Dataset):
-    def __init__(self, test = None, train = None, data_split = None, label = "cell_type", ID = 'ENSEMBL'):
+    def __init__(self, test = None, train = None, data_split = None, label = "cell_type", ID = 'ENSEMBL', dataset_normalization = False):
+        # Dataset normalization controls whether data is ranked based on just median normalized data, or if it is ranked based on median and dataset gene count normalization
+        self.dataset_normalization = dataset_normalization
         try:
             self.label = label
             
             # Uses a train/test split if provided, otherwise creates the test split if only a test value is provided
             try:
-                if train:
-                    pass
-                data, ranked_genes = self.convert(test, label, ID, train_test_labels = None)
-                
-            except:
                 train_test_labels = [1 for _ in range(len(train))] + [0 for _ in range(len(test))]
                 data = pl.concat((train, test), how = 'vertical')
                 data, ranked_genes = self.convert(data, label, ID, train_test_labels)
+            except:
+                data, ranked_genes = self.convert(test, label, ID, train_test_labels = None)
                 
             self.ranked_genes = ranked_genes
             super().__init__(data)
         except:
+            print(traceback.format_exc())
             pass
         
     def convert(self, data, label, ID, train_test_labels, count_id = 'expression', gene_id = "genes", GF_limit = 2048):
@@ -572,10 +578,14 @@ class CellData(Dataset):
         
         for row in expression.iter_rows():
             gexp = {genes[i]:exp for i, exp in enumerate(row[:-1])}
-        
+            
+            # Normalizes each set of genes by median and/or dataset gene count
             for num, key in enumerate(list(gexp.keys())):
                 try:
-                    gexp[key] /= (median_dict[key] * gene_counts[key])
+                    if self.dataset_normalization:
+                        gexp[key] /= (median_dict[key] * gene_counts[key])
+                    else:
+                        gexp[key] /= (median_dict[key])
                 except:
                     gexp.pop(key)
                 
@@ -589,7 +599,8 @@ class CellData(Dataset):
                 ans_dict[label].append(row[label_index])
             except:
                 ans_dict[label].append(row[label_index - 1])
-            
+        
+        # Creates pyarrow tabe out of the data
         data = pa.Table.from_arrays([ans_dict[key] for key in list(ans_dict.keys())], names=list(ans_dict.keys()))
         
         return data, ranked_genes
@@ -605,6 +616,7 @@ class CellData(Dataset):
         pool = Pool()
         converted_set = []
 
+        # Ensembl based searching
         def process_gene(gene):
              api_url = f"https://rest.ensembl.org/xrefs/symbol/{species}/{gene}?object_type=gene"
              response = requests.get(api_url, headers={"Content-Type": "application/json"})
@@ -615,6 +627,7 @@ class CellData(Dataset):
                  gene = None
              return gene
              
+        # HGNC ID searching
         def process_hgnc(gene):
             for gene in tqdm.tqdm(genes, total = len(genes)):
                 api_url = f"https://rest.ensembl.org/xrefs/symbol/{species}/{hgnc_id}?object_type=gene"
@@ -626,6 +639,7 @@ class CellData(Dataset):
                     gene = None
                 return gene
                         
+        # GO ID searching
         def process_go(gene):
              mg = mygene.MyGeneInfo()
              results = mg.query(gene, scopes="go", species=species, fields="ensembl.gene")
@@ -645,6 +659,7 @@ class CellData(Dataset):
                  gene = None
              return gene
              
+        # Selects the ID conversion to ensembl
         if type == None or type.upper() == 'ENSEMBL':
             converted_set = gene_set
         elif type.upper() == 'GENE':
@@ -668,8 +683,9 @@ class CellData(Dataset):
                     converted_genes.append(result)
                 converted_set.append(converted_genes)
                 
+        # Obtains Cheml ENSEMBL names for each gene if possible
         Chembl = []
-
+        
         for set_num, set in enumerate(converted_set):
             Chembl.append([])
             for gene in set:
@@ -688,6 +704,33 @@ class CellData(Dataset):
         
         return Chembl    
     
+
+ # Function for filtering the sample of samples with much greater or fewer genes
+def filter_samples(data):
+    gene_columns = data.columns
+    
+    # Calculate the total count of genes for each sample by iterating through rows
+    total_gene_counts = [row.sum() for row in data.select(gene_columns).to_numpy()]
+   
+    # Create a Series from the list of sums and add it as a new column
+    data_with_total = data.with_columns(pl.Series("total_gene_count", total_gene_counts))
+
+    # Calculate the mean and standard deviation of the total counts
+    mean_count = data_with_total["total_gene_count"].mean()
+    std_dev = data_with_total["total_gene_count"].std()
+
+    # Filter out samples with total count outside the specified range
+    lower_bound = mean_count - 3 * std_dev
+    upper_bound = mean_count + 3 * std_dev
+    filtered_data = data_with_total.filter((pl.col("total_gene_count") >= lower_bound) &
+                                           (pl.col("total_gene_count") <= upper_bound))
+
+    # Drop the 'total_gene_count' column if not needed
+    filtered_data = filtered_data.drop("total_gene_count")
+
+    return filtered_data
+    
+    
 # Primary function for running Geneformer analysis
 def format_sci(data, 
                token_dictionary = Path('geneformer/token_dictionary.pkl'), 
@@ -700,8 +743,11 @@ def format_sci(data,
                GF_samples = 20000, 
                equalize = True,
                save_img = 'Scipher_Roc_data.png',
-               ensembl_convert = True,
-               epochs = 50):
+               ensembl_convert =False,
+               epochs = 50,
+               filter_data = False, 
+               normalize = True, 
+               augment_combine = True):
                
     '''
     KEY FUNCTION PARAMETERS
@@ -710,7 +756,7 @@ def format_sci(data,
         CSV file containing expression/labelled data to be loaded into the model
         
     PR : bool, default = False
-        Chooses whether to calculate a precision/recall curve.
+        Chooses whether to calculate a precision/recall curve
         
     augment: bool, default = False
         Chooses whether to create augmented data and use it as a training set (with the true dataset as the test set) or not.
@@ -738,12 +784,25 @@ def format_sci(data,
 
     epochs : int
         Number of epochs to train Geneformer
+        
+    filter_data : bool, default = False
+        Whether data should be filters for samples falling outside of a standard deviation of gene counts (by default, -3 to 3)
+        
+    augment_combine : bool, default = True
+        If data is augmented, the data is mxixed into the train/test set. If set to false, it will PURELY be used as training data, and the og dataset will be used for testing
+        
     '''
     
     cols = []
     conversion = {}
     data = pl.read_csv(data)
-    
+    data = data.sample(fraction = 1.0, shuffle = True)
+
+    sum_except_last = data.select(pl.all().exclude(data.columns[-1])).sum(axis=1)
+
+    # Filter rows where sum_except_last is not zero
+    data = data.filter(sum_except_last != 0)
+        
     token_dict = pk.load(open(token_dictionary, 'rb'))
     gene_dict = pk.load(open(gene_conversion, 'rb'))
     
@@ -764,34 +823,39 @@ def format_sci(data,
         keep = cols + [target_label]
         data = data.select(keep)
         data = data.rename(conversion)
-
-    # Normalizes individual samples to total read count
-    data = normalize_data(data, polars = True, round_data = False)
-    data = data.sample(fraction = 1.0, shuffle = True)
     
     if equalize == True:
         data = equalize_data(data)
-
+  
     labels = [int(i) for i in list(data[target_label])]
     data = data.sample(fraction = 1.0, shuffle = True)
-     
+  
     # Calculates dataset bias
     dataset_bias = 1 - (labels.count(0)/labels.count(1))/2
     
     # Augments data
     if augment == True:
-        augmented_data = augment_data(data = data, selected_label = 'all', num_samples = GF_samples, polars = True, normalize = False)    
+        #augmented_data = augment_data(data = data, selected_label = 'all', num_samples = GF_samples, polars = True, normalize = False)    
+        augmented_data = augment_data(data = data, selected_label = 0, num_samples = labels.count(1) - labels.count(0), polars= True, normalize = False)
         augmented_data = augmented_data.sample(fraction = 1.0, shuffle = True)
-    
-    # Adds noise to data if indicated
-    if noise:
-      data = add_noise(data, noise = noise)
-      data = data.sample(fraction = 1.0, shuffle = True)
- 
+        
+        
+    if augment_combine:
+        data = pd.concat((data.to_pandas(), augmented_data.to_pandas()), axis = 0)
+        data = pl.from_pandas(data)
+        augmented_data = None
+        
+    # Normalizes data if indicated
+    if normalize:
+        data = normalize_data(data, polars = True)
+        
+    if filter_data:
+        data = filter_samples(data)
+        
     # Converts data to GF-applicable format
-    try:
+    if augmented_data:
         cell_data = CellData(train = augmented_data, test = data, label = target_label)
-    except:
+    else:
         cell_data = CellData(train = None, test = data, label = target_label)
 
     cell_data.save_to_disk(save)
@@ -804,14 +868,20 @@ def format_sci(data,
     # Selects only genes that are exposed to GeneFormer
     data = data.select(cell_data.ranked_genes + [target_label])
     #augmented_data = augmented_data.select(cell_data.ranked_genes + [target_label])
+    
+    # Adds noise to data if indicated
+    if noise:
+      data = add_noise(data, noise = noise)
+      data = data.sample(fraction = 1.0, shuffle = True)
+      
     data = data.sample(fraction = 1.0, shuffle = True)
     
     if PR == True:
         # Calculates TPR and FPR for GeneFormer
-        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = save, epochs = epochs, geneformer_batch_size = 9,
-            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 1, output_dir = 'GF-finetuned', ROC_curve = False)
+        recall4, precision4, auc4 = finetune_cells(model_location = "/work/ccnr/GeneFormer/GeneFormer_repo", dataset = save, epochs = epochs, geneformer_batch_size = 12,
+            skip_training = False, label = "RA", inference = False, optimize_hyperparameters = False, emb_dir = 'RA', emb_extract = False, freeze_layers = 0, output_dir = 'GF-finetuned', ROC_curve = False)
         
-        # Calculates TPR and FPR for ensemble models
+       # Calculates TPR and FPR for ensemble models
         try:
             recall3, precision3, auc3 = FFN(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
             recall2,  precision2, auc2 = SVC_model(test_data = data, train_data = augmented_data, total_samples = GF_samples, augment = False, ROC = False)
@@ -822,21 +892,36 @@ def format_sci(data,
             recall1, precision1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False, ROC = False)
 
         plt.figure(figsize=(8, 6))
-        plt.plot(recall1, precision1, color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
-        plt.plot(recall2, precision2, color='green', lw=2, label=f'SVC (AUC = {round(auc2, 3)})')
-        plt.plot(recall3, precision3, color = 'blue', lw=3, label = f'Feed-Forward Network (AUC = {round(auc3, 3)})')
-        plt.plot(recall4, precision4, color = 'red', lw=3, label = f'GeneFormer (AUC = {round(auc4, 3)})')
+        plt.plot(sorted(recall1, reverse = True), sorted(precision1), color='darkorange', lw=2, label=f'RF = {round(auc1, 3)}')
+        plt.plot(sorted(recall2, reverse = True), sorted(precision2), color='green', lw=2, label=f'SVM = {round(auc2, 3)}')
+        plt.plot(sorted(recall3, reverse = True), sorted(precision3), color = 'blue', lw=3, label = f'FFN = {round(auc3, 3)}')
+        plt.plot(sorted(recall4, reverse = True), sorted(precision4), color = 'red', lw=3, label = f'GF = {round(auc4, 3)}')
         plt.plot([0, 1], [dataset_bias, dataset_bias], color = 'navy', lw = 2, linestyle = '--', label = 'Chance')
+        
         plt.xlim([-.05, 1.05])
-        plt.xlabel('Recall')
-        plt.ylabel('Precision')
-        plt.title(f'RA Dataset Precision/Recall for Geneformer and Ensemble Models \n (n = {len(data)})')
-        plt.legend(loc='lower left', bbox_to_anchor=(0, 0.2), ncol=1)
+        plt.xlabel('Recall', fontsize=16)
+        plt.ylabel('Precision', fontsize=16)
+        plt.legend(loc='lower left', ncol=1, fontsize=14)
         plt.tight_layout()
         
+       
+        # Saves the data
+        img_data = {
+            'Geneformer Precison': sorted(precision4),
+            'Geneformer Recall':sorted(recall4, reverse = True),
+            'Feed Forward Precision':sorted(precision3),
+            'Feed Forward Recall':sorted(recall3, reverse = True),
+            'SVG Precision':sorted(precision2),
+            'SVG Recall':sorted(recall2, reverse = True),
+            'RF Precision':sorted(precision1),
+            'RF Recall':sorted(recall1, reverse = True)
+            }
+        img_data = pd.DataFrame.from_dict(img_data, orient='index')
+        img_data = img_data.transpose()
+        img_data.to_csv('ScipherRA_data_PR.csv')
+        
         # Saves image
-        if save_img:
-            plt.savefig(save_img)
+        plt.savefig('PR.png')
     
     else:
         # Calculates ROC curve for GeneFormer
@@ -853,27 +938,37 @@ def format_sci(data,
             fpr1, tpr1, auc1 = RandomForest(test_data = data, train_data = None, total_samples = GF_samples, augment = False)
             
         plt.figure(figsize=(8, 6))
-        plt.plot(fpr1, tpr1, color='darkorange', lw=2, label=f'RF (AUC = {round(auc1, 3)})')
-        plt.plot(fpr2, tpr2, color='green', lw=2, label=f'SVC (AUC = {round(auc2, 3)})')
-        plt.plot(fpr3, tpr3, color = 'blue', lw=3, label = f'Feed-Forward Network (AUC = {round(auc3, 3)})')
-        plt.plot(tpr4, fpr4, color = 'red', lw=3, label = f'GeneFormer (AUC = {round(auc4, 3)})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.plot(fpr1, tpr1, color='darkorange', lw=2, label=f'RF = {round(auc1, 2)}')
+        plt.plot(fpr2, tpr2, color='green', lw=2, label=f'SVM = {round(auc2, 2)}')
+        plt.plot(fpr3, tpr3, color = 'blue', lw=3, label = f'FFN = {round(auc3, 2)}')
+        plt.plot(tpr4, fpr4, color = 'red', lw=3, label = f'GF = {round(auc4, 2)}')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label = 'Chance')
+        
         plt.xlim([-.05, 1.05])
         plt.ylim([0, 1.05])
-        plt.xlabel('False positive rate')
-        plt.ylabel('True positive rate')
-        try:
-            augmented_data
-            plt.title(f'Scipher data Drug Predictions ROC for Ensemble vs Geneformer curve \n (n = {GF_samples}, nbinomial augmenation)')
-        except:
-            plt.title(f'RA Dataset Drug Predictions ROC for Ensemble vs Geneformer curve \n (n = {len(data)})')
-        #plt.title(f'Shuffling before augmentation ROC Curve (n = 20000 samples, mbinomial augmentation)')
-        plt.legend(loc='lower left', bbox_to_anchor=(.5, 0.2), ncol=1)
+        plt.xlabel('False positive rate', fontsize=16)
+        plt.ylabel('True positive rate', fontsize=16)
+        plt.legend(loc='lower right', ncol=1, fontsize=14)
         plt.tight_layout()
         
+        # Saves FPR/TPR data
+        img_data = {
+            'Geneformer FPR': fpr4,
+            'Geneformer TPR':tpr4,
+            'Feed Forward FPR':fpr3,
+            'Feed Forward TPR':tpr3,
+            'SVG FPR':fpr2,
+            'SVG TPR':tpr2,
+            'RF FPR':fpr1,
+            'RF TPR':tpr1
+            
+            }
+        img_data = pd.DataFrame.from_dict(img_data, orient='index')
+        img_data = img_data.transpose()
+        img_data.to_csv('ScipherRA_data_ROC.csv')
+        
         # Saves image
-        if save_img:
-            plt.savefig(save_img)
+        plt.savefig('ROC.png')
     
 # Function for equalizing labels
 def equalize_data(data, label = 'RA'):
@@ -896,19 +991,6 @@ def equalize_data(data, label = 'RA'):
             data_rows.append(row)
     data = pl.DataFrame(data_rows, schema = data_columns)
 
-    return data
-    
-# Function for shuffling a certain number of labels
-def shuffle_labels(data, label = 'RA', fraction = 1):
-    data.sample(fraction = 1, shuffle = True)
-    labels = data[label].to_list()
-    fraction_shuffled = int(len(labels) * fraction)
-    shuffled_subset = labels[:fraction_shuffled]
-    random.shuffle(shuffled_subset)
-    shuffled_labels = shuffled_subset + labels[fraction_shuffled:]
-    data = data.drop(label)
-    data = pl.concat((data, pl.DataFrame([shuffled_labels], schema = [label])), how = 'horizontal')
-    
     return data
 
 # Feed-forward network testing
@@ -1046,7 +1128,6 @@ def FFN(train_data, test_data, epochs = 20, total_samples = 3000, test_size = .2
         print(f'FFN AUC: {auc}')
                      
         return fpr, tpr, auc
-        
     
     
 def RandomForest(train_data, test_data, total_samples = 3000, num_estimators = 100, test_size = .2, noise = .25, augment = True, ROC = True):
@@ -1073,10 +1154,12 @@ def RandomForest(train_data, test_data, total_samples = 3000, num_estimators = 1
     X_train, y_train = train_data[:, :-1].to_numpy(), train_data[:, -1].to_list()
     X_test, y_test = test_data[:, :-1].to_numpy(), test_data[:, -1].to_list()
     
+    # Scales data
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
                          
+    # Adds noise to data if specified
     X_train = add_noise(X_train, noise = noise, label = 'RA')
     X_test = add_noise(X_test, noise = noise, label = 'RA')
     
@@ -1110,15 +1193,17 @@ def RandomForest(train_data, test_data, total_samples = 3000, num_estimators = 1
         return fpr, tpr, auc
     
     
+# Code for using the support vector machine model
 def SVC_model(train_data, test_data , total_samples = 3000, test_size = .2, noise = .25, augment = True, ROC = True):  
 
+    # Train/test split if applicable
     try:
         if train_data.is_empty():
             pass
             
     except:
         train_data, test_data = train_test_split(test_data, test_size = test_size, random_state=42)
-
+    
     train_labels, test_labels = train_data[:, -1].to_list(), test_data[:, -1].to_list()
     train_size = ( 1 - test_size) * total_samples
     test_size = total_samples - train_size
@@ -1131,9 +1216,11 @@ def SVC_model(train_data, test_data , total_samples = 3000, test_size = .2, nois
         test_data = augment_data(data = test_data, selected_label = 'all', polars = True,
                                      num_samples = test_size).sample(fraction = 1.0, shuffle = True)
                 
+    
     X_train, y_train = train_data[:, :-1].to_numpy(), train_data[:, -1].to_list()
     X_test, y_test = test_data[:, :-1].to_numpy(), test_data[:, -1].to_list()
     
+    # Scales data and adds noise if specified
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
@@ -1141,6 +1228,7 @@ def SVC_model(train_data, test_data , total_samples = 3000, test_size = .2, nois
     X_train = add_noise(X_train, noise = noise, label = 'RA')
     X_test = add_noise(X_test, noise = noise, label = 'RA')
     
+    # Fits model
     model = SVC()
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
@@ -1171,6 +1259,7 @@ def SVC_model(train_data, test_data , total_samples = 3000, test_size = .2, nois
         return fpr, tpr, auc
     
     
+# Obtain user arguments
 def get_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--type', dest = 'type', type = str, help = 'Type of run', default = None)
@@ -1178,15 +1267,29 @@ def get_arguments():
     
     return args
     
+# Main runtime
 if __name__ == '__main__':
     args = get_arguments()
     if 'arthritis' in args.type:
-        format_sci(data = Path("Training_Datasets/GSE97476_unique.csv"), save_img = 'RAROC.svg', save = 'Scipher.dataset', equalize = True) #"Enzo_dataset2.csv" 'enzo/RAmap.csv'
+        format_sci(data = Path("Training_Datasets/GSE97810_unique.csv"), save_img = 'RAROC.png', save = 'Scipher.dataset', PR = False, equalize = False, augment = True, epochs = 40, noise = 0.2,
+                                                      GF_samples = 1000, normalize = False) #"Enzo_dataset2.csv" 'enzo/RAmap.csv'
     elif 'cancer' in args.type:
-        format_sci(data = Path("Training_Datasets/carcinoma.csv"), save_img = 'CancerROC.svg', save = 'Scipher.dataset', equalize = True) 
+        format_sci(data = Path("Training_Datasets/Carcinoma.csv"), save_img = 'CancerROC.png', save = 'Scipher.dataset', equalize = True, filter_data = False, noise = 0, normalize = True, epochs = 30) 
+    elif 'covid' in args.type:
+        format_sci(data = Path("Training_Datasets/COVID_half.csv"), save_img = 'CV_ROC.png', 
+                   save = 'Scipher.dataset', equalize = True, epochs = 5) 
+    elif 'carcinoma' in args.type:
+        format_sci(data = Path("Training_Datasets/carcinoma_sample.csv"), save_img = 'CV_ROC.png', 
+                   save = 'Scipher.dataset', equalize = True, epochs = 10) 
     elif 'amd' in args.type:
-        format_sci(data = Path("Training_Datasets/AMD_frac.csv"), save_img = 'AMD_ROC.svg', 
-                   save = 'Scipher.dataset', equalize = True, epochs = 50) 
+        format_sci(data = Path("Training_Datasets/AMD_frac.csv"), save_img = 'CV_ROC.png', 
+                   save = 'Scipher.dataset', equalize = False, epochs = 30) 
     else:
-        format_sci(data = Path("Training_Datasets/singleRA.csv"), save_img = 'ArtitROC.svg', save = 'Scipher.dataset', equalize = True) 
+        format_sci(data = Path("Training_Datasets/singleRA.csv"), save_img = 'ArtitROC.png', save = 'Scipher.dataset', equalize = True, 
+                   epochs = 5) 
+        
+        
+        
+        
+        
     
