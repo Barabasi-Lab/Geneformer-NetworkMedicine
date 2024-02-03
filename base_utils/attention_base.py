@@ -12,9 +12,10 @@ from tqdm.contrib.concurrent import process_map
 import requests
 import copy
 import math
+import traceback
 
 # Data processing/pre-processing/comparison imports
-from collections import defaultdict
+from collections import defaultdict, Counter
 import numpy as np
 import polars as pl
 import pandas as pd
@@ -27,8 +28,9 @@ from scipy.stats import ttest_ind, binom_test, ks_2samp
 import statistics
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, wasserstein_distance
 from scipy import interpolate, optimize 
+import scipy.stats as stats
 
 # Torch/Geneformer imports
 import torch
@@ -92,10 +94,19 @@ class GFDataset(Dataset):
         return torch.LongTensor(padded_input_ids)
         
 # Processes a batch of attention matrices with associated heads
-def process_batch(attentions, context_length = 2048):
+def process_batch(attentions, context_length = 2048, selected_heads = None):
     attention_matrices, genes_list = attentions[0], attentions[1]
+
     num_attention_heads = len(attention_matrices[0])
     gene_attentions = {}
+
+    # List of all attention heads that will be extracted
+    if selected_heads == None:
+        selected_heads = [i for i in range(num_attention_heads)]
+    elif selected_heads == 'Max':
+        selected_heads = [num_attention_heads - 1]
+    else:
+        selected_heads = selected_heads
 
     # Iterates through attention matrices 
     for attention_matrix, genes in zip(attention_matrices, genes_list):
@@ -115,27 +126,30 @@ def process_batch(attentions, context_length = 2048):
 
         # Iterates through attention heads
         for attention_head_num in range(num_attention_heads):
-            attention_head = attention_matrix[attention_head_num]
-            attention_weights = attention_head[np.arange(len(source_genes))[:, None], np.arange(len(target_genes))]
-            attention_weights = attention_weights - np.diag(np.diag(attention_weights))
+            if attention_head_num in selected_heads:
+                attention_head = attention_matrix[attention_head_num]
+                attention_weights = attention_head[np.arange(len(source_genes))[:, None], np.arange(len(target_genes))]
+                attention_weights = attention_weights - np.diag(np.diag(attention_weights))
 
-            for i, source_gene in enumerate(source_genes):
-                for j, target_gene in enumerate(target_genes):
-                    gene_attentions.setdefault(source_gene, {}).setdefault(target_gene, []).append(attention_weights[i][j])
+                for i, source_gene in enumerate(source_genes):
+                    for j, target_gene in enumerate(target_genes):
+                        gene_attentions.setdefault(source_gene, {}).setdefault(target_gene, []).append(attention_weights[i][j])
 
     return gene_attentions
     
 # Primary runtime function for extracting attention weights
 def extract_attention(model_location = '.', 
                       data = '/work/ccnr/GeneFormer/GeneFormer_repo/Genecorpus-30M/genecorpus_30M_2048.dataset',
-                      samples = 1000, layer_index = 4, 
+                      samples = 1000, 
+                      layer_index = -1, 
                       gene_conversion = "/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl", 
                       mean = False,  
                       num_processes = os.cpu_count(),
                       filter_genes = None, save = False, 
                       data_sample = None, half = False,
                       filter_label = None, save_threshold = False, 
-                      perturb_genes = None, shuffle = False):
+                      perturb_genes = None, shuffle = False,
+                      mean_threshold = 4):
     '''
     PARAMETERS
     -----------------------------------------
@@ -181,14 +195,14 @@ def extract_attention(model_location = '.',
     perturb_genes : list, None
         Whether the dataset should be perturbed for a specific gene before attention extraction. Defaults to None
 
+    mean_threshold : int
+        The amount of times a gene should be present in order to count as a collected gene. Works for mean aggregation only. Defaults to 4
+
     OUTPUTS
     -----------------------------------------
     aggregated_gene_attentions : dict
         Dictionary of aggregated gene attentions, processed as either the mean or the max of all relevant attention weights
-        
-    strong_attentions : list
-        List of the top-strength gene connections. Containss n lists of top attention tuples (with the structure (source gene, target gene, attention weight). Is not returned if top_connections == 0 or None
-    
+
     '''
     
     # Creates conversion from tokens back to genes
@@ -220,8 +234,8 @@ def extract_attention(model_location = '.',
         else:
             data = data
             
-    else: # Greedy sampling to ensure that specified gene IDs are present (if possible) in sampled dataset
-        
+    else: 
+        # Greedy sampling to ensure that specified gene IDs are present (if possible) in sampled dataset
         gene_size = (samples // len(filter_genes)) + 1    
         total_indices = list(range(len(data)))
         sampled_indices = []
@@ -377,17 +391,18 @@ def extract_attention(model_location = '.',
                 
                 for source_gene, target_genes in tqdm.tqdm(gene_attentions.items(), total = len(gene_attentions.items()), desc = 'Narrowing results'):
                     for target_gene, attentions in target_genes.items():
-                        average_attention = np.mean(attentions)
-                        if average_attention > threshold:
-                            aggregated_gene_attentions[source_gene][target_gene].append((len(attentions), average_attention))
-                            
+                        if len(attentions) > mean_threshold:
+                            average_attention = np.mean(attentions)
+                            if average_attention > threshold:
+                                aggregated_gene_attentions[source_gene][target_gene].append((len(attentions), average_attention))
+                                
             else:
                 for source_gene, target_genes in tqdm.tqdm(gene_attentions.items(), total = len(gene_attentions.items()), desc = 'Narrowing results'):
                     for target_gene, attentions in target_genes.items():
                         # Creates new dictionary for source gene if not already existing
-        
-                        average_attention = np.mean(attentions)
-                        aggregated_gene_attentions[source_gene][target_gene].append((len(attentions), average_attention))
+                        if len(attentions) > mean_threshold:
+                            average_attention = np.mean(attentions)
+                            aggregated_gene_attentions[source_gene][target_gene].append((len(attentions), average_attention))
         else:
 
             # Creates a threshold for saving weights, if enabled
@@ -414,6 +429,7 @@ def extract_attention(model_location = '.',
     
     # Perturbs dataset if indicated
     if perturb_genes != None:
+
         # Copies dataset
         perturbed_data = copy.deepcopy(data)
         if type(perturb_genes) != list:
@@ -437,6 +453,7 @@ def extract_attention(model_location = '.',
                     print(f'Gene token {gene_token} not a Geneformer-compatible gene!')
                     continue
             
+        # Obtains regualr and perturbed weights
         regular_weights = obtain_weights(model, data)
         perturbed_weights = obtain_weights(model, perturbed_data)
 
@@ -450,7 +467,7 @@ def extract_attention(model_location = '.',
 def compare_LCCs(attentions, num_diseases = 11, keyword = None, #guaranteed_LCCs = ['cardiomyopathy hypertrophic', 'heart failure', 'cardiomyopathy dilated', 'dementia', 'arthritis rheumatoid', 'anemia', 'calcinosis', 'parkinsonian disorders'],
                 guaranteed_LCCs = ['covid','cardiomyopathy hypertrophic', 'cardiomyopathy dilated', 'adenocarcinoma', 'small cell lung carcinoma', 'heart failure', 'dementia', 'arthritis rheumatoid', 'anemia', 'calcinosis', 'parkinsonian disorders'],
                 disease_location = Path('/work/ccnr/GeneFormer/GeneFormer_repo/PPI/GDA_Filtered_04042022.csv'),
-                return_LCCs = False):
+                return_LCCs = False, save = True):
     network_LCCs = {}
 
     # Obtains and maps LCCs that are given
@@ -468,6 +485,7 @@ def compare_LCCs(attentions, num_diseases = 11, keyword = None, #guaranteed_LCCs
     diseases = list(set(pd.read_csv(disease_location)['NewName']) - set([i.lower() for i in guaranteed_LCCs]))
     random_LCCs = random.sample(diseases, num_diseases - len(network_LCCs))
 
+    # Iterates through LCCs and obtains LCC-related attention
     for LCC in tqdm.tqdm(random_LCCs, total = len(random_LCCs), desc = 'Obtaining Random LCCs'):
         disease_genes = isolate_disease_genes(LCC)
         try:
@@ -487,6 +505,7 @@ def compare_LCCs(attentions, num_diseases = 11, keyword = None, #guaranteed_LCCs
     
         colors = ['red', 'orange', 'green', 'blue', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta', 'black']
         counter = 0
+
         for LCC, network in network_LCCs.items():
             # Retrieve and adjust attention values
             LCC_attentions = [network[u][v]['attention'] 
@@ -498,7 +517,6 @@ def compare_LCCs(attentions, num_diseases = 11, keyword = None, #guaranteed_LCCs
         plt.xlabel('Attention Weights')
         plt.ylabel('Cumulative Probability')
         plt.legend(loc = 'lower right')
-        #plt.legend(loc='lower right', bbox_to_anchor=(0, 0.2), ncol=1, fontsize = 8)
         plt.title('Cumulative Distribution of Attention Weights for Various LCCs')
         plt.tight_layout()
 
@@ -510,7 +528,11 @@ def compare_LCCs(attentions, num_diseases = 11, keyword = None, #guaranteed_LCCs
 
 
 # Maps attention scores to PPI
-def map_attention_attention(PPI, gene_attentions, save = False, LCC = False):
+def map_attention_attention(PPI, gene_attentions, 
+                            save = True, 
+                            LCC = False, 
+                            mean = False,
+                            show = False):
     # Make a copy of the original graph
     PPI_copy = nx.Graph(PPI)
 
@@ -526,14 +548,16 @@ def map_attention_attention(PPI, gene_attentions, save = False, LCC = False):
                 attention_ratio = min(attention_direction1, attention_direction2) / max(attention_direction1, attention_direction2)
             except:
                 attention_ratio = 1
-            selected_attention = max(attention_direction1, attention_direction2)
+            if mean == False:
+                selected_attention = max(attention_direction1, attention_direction2)
+            else:
+                selected_attention = (attention_direction1 + attention_direction2) / 2
 
             if not isinstance(selected_attention, list):
                 PPI_copy[u][v]['attention'] = selected_attention
                 PPI_copy[u][v]['ratio'] = attention_ratio
             else:
                 edges_to_remove.append((u, v))
-
         except:
             edges_to_remove.append((u, v))
     
@@ -558,124 +582,120 @@ def map_attention_attention(PPI, gene_attentions, save = False, LCC = False):
     if save:
         pk.dump(PPI_copy, open('attention_PPI.pk', 'wb'))
 
-    if LCC == False:
-        print(f'PPI attention: {average_edge_attention}')
-        print(f'PPI attention standard deviation: {np.std(edge_attentions)}')
-    else:
-        print(f'LCC attention: {average_edge_attention}')
-        print(f'LCC attention standard deviation: {np.std(edge_attentions)}')
-    print('')
-    print(f'Total attention: {average_total_attention}')
-    print(f'Total attention standard deviation: {np.std(total_attention)}')
-    print(f'T-test p-value: {p_value} \n')
-    #print(f'Average network ratio {np.mean([PPI_copy[u][v]["ratio"] for u, v in PPI_copy.edges()])}')
+    if show == True:
+        if LCC == False:
+            print(f'PPI attention: {average_edge_attention}')
+            print(f'PPI attention standard deviation: {np.std(edge_attentions)}')
+        else:
+            print(f'LCC attention: {average_edge_attention}')
+            print(f'LCC attention standard deviation: {np.std(edge_attentions)}')
+            
+        print(f'Total attention: {average_total_attention}')
+        print(f'Total attention standard deviation: {np.std(total_attention)}')
+        print(f'T-test p-value: {p_value} \n')
+        print(f'Average network ratio {np.mean([PPI_copy[u][v]["ratio"] for u, v in PPI_copy.edges()])}')
 
     return PPI_copy, average_edge_attention, average_total_attention
     
 # Function for creating fake edges
-def generate_fake_attentions(graph, num_fake_attentions, gene_attentions, node_to_index):
+def generate_fake_attentions(graph, num_fake_attentions, 
+                             gene_attentions, 
+                             respect_PPI = True, 
+                             bidirectional = False,
+                             min_threshold = None):
 
     # Prepares variables and progress bar
     fake_edges = set()
     nodes = list(graph.nodes())
-    fake_attentions = []
-    pbar = tqdm.tqdm(total=num_fake_attentions, desc="Generating Fake Edges")
-    
-    # Iterates fake attentions until quota is matched
-    while len(fake_attentions) < num_fake_attentions:
-    
-        # Randomly select two nodes
-        node1, node2 = random.sample(nodes, 2)
-        
-        # Ensure the selected nodes are not connected in the real graph
-        if not graph.has_edge(node1, node2) and node1 != node2:
+    node_degrees = [graph.degree(node) for node in nodes]
+    total_degree = sum(node_degrees)
+    node_probabilities = [degree / total_degree for degree in node_degrees]
 
-            # Ensure the edge is not already in the fake edges list
-            if (node1, node2) not in fake_edges and (node2, node1) not in fake_edges:          
-                try:
-                    attention = gene_attentions[node1][node2]
-                    if not isinstance(attention, list):
-                        fake_attentions.append(attention)
-                    else:
-                        raise ValueError
-                except:
+    pbar = tqdm.tqdm(total=num_fake_attentions, desc="Generating Fake Edges")
+    fake_attentions = []
+
+    # Generates attentions following a degree distribution similar to the real graph
+    if respect_PPI:
+        fake_attentions = []
+
+        # Iterates fake attentions until quota is matched
+        while len(fake_attentions) < num_fake_attentions:
+            # Randomly select two nodes based on degree distribution
+            node1, node2 = np.random.choice(nodes, 2, replace=False, p=node_probabilities)
+
+            # Ensure the selected nodes are not connected in the real graph
+            if not graph.has_edge(node1, node2) and node1 != node2:
+
+                # Ensure the edge is not already in the fake edges list
+                if (node1, node2) not in fake_edges and (node2, node1) not in fake_edges:
                     try:
-                        attention = gene_attentions[node2][node1]
+
+                        # Takes the attention weight in one direction or both depending on bidirectioanlity settings
+                        if bidirectional:
+                            attention1 = gene_attentions[node1][node2]
+                            attention2 = gene_attentions[node2][node1]
+                            attention = max(attention1, attention2)
+                        else:
+                            attention = gene_attentions[node1][node2]
+
+                        # Adds the fake edge to the set
                         if not isinstance(attention, list):
                             fake_attentions.append(attention)
+                            fake_edges.add((node1, node2)) 
+                            pbar.update(1)
                         else:
-                            raise ValueError                      
+                            raise ValueError
                     except:
                         continue
-                
-                 # Add the fake edge to the graph and attention 
-                graph.add_edge(node1, node2) 
-                fake_edges.add((node_to_index[node1], node_to_index[node2]))
-                pbar.update(1)
-    pbar.close()
-    
-    return fake_attentions
+        pbar.close()
+           
+    else:
+        # Flattens attention weight dictionary
+        flattened_dict = [value
+                    for _, inner_dict in gene_attentions.items()
+                    for _, value in inner_dict.items()]
         
-# Calculates F1 scores for PPI
-def F1_score_attention(PPI, gene_attention,):
 
-    # Obtains index of all nodes with PPI
-    node_to_index = {node: index for index, node in enumerate(PPI.nodes())}
-        
-    real_attentions = []
-    for u, v in PPI.edges():
-        try:
-            attention = PPI[u][v]['attention']
+        while len(fake_attentions) < num_fake_attentions:
+
+            # Randomly selects two attentions
+            if bidirectional == True:
+                random_attentions = random.sample(flattened_dict, 2)
+                attention = max(random_attentions)
+            else:
+                attention = random.sample(flattened_dict, 1)[0]
+
+            # Adds attention weight to set
             if not isinstance(attention, list):
-                real_attentions.append(attention)
-        except:
-            pass
-            
-    # Generates attention labels
-    fake_attentions = generate_fake_attentions(PPI, len(real_attentions), gene_attention, node_to_index)
-    fake_labels = [0 for _ in range(len(fake_attentions))]
-    real_labels = [1 for _ in range(len(real_attentions))]
-    
-    labels = fake_labels + real_labels
-    attentions = fake_attentions + real_attentions
-    
-    # Assuming you have y_pred as the predicted labels (0 or 1) and y_prob as predicted probabilities for the positive class
-    precision, recall, _ = precision_recall_curve(labels, attentions)
-    
-    # Compute AUC for precision-recall curve
-    pr_auc = auc(recall, precision)
-    
-    print(f'AUC score: {pr_auc}')
+                fake_attentions.append(attention)
+                pbar.update(1)
+        pbar.close()
+
+    if min_threshold:
+        fake_attentions = [attention for attention in fake_attentions if attention >= min_threshold]
+
+    return fake_attentions  
 
 # Calculates F1 scores for PPI and LCC, calculates both their AUC curves and graphs them
-def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = True, LCC_show = True, keyword = None):
+def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = True, keyword = None,
+                       save = True, epsilon = 10e-8):
 
-    # Dictionary for converting nodes to numerical tokens
-    node_to_index = {node: index for index, node in enumerate(PPI.nodes())}
-        
     if LCC != None:
         # Obtains LCC attentions
         LCC_attentions = []
         for u, v in LCC.edges():
             try:
                 attention = LCC[u][v]['attention']
-                if not isinstance(attention, list):
 
-                    # Bulks up size by sampling 3 times
-                    LCC_attentions += [attention] * 3
+                # Thresholding if enabled
+                if min_threshold:
+                        if attention < min_threshold:
+                            continue
+
+                # Bulks up size by sampling 3 times
+                LCC_attentions += [attention] * 3
             except:
                 pass
-
-        if LCC_show:
-            LCC_ranked = []
-            for u, v in LCC.edges():
-                try:
-                    LCC_ranked.append((u, v, LCC[u][v]['attention']))
-                except:
-                    pass
-            LCC_ranked = sorted(LCC_ranked, key = lambda x: x[2], reverse = True)
-            print(f'Top ranked: {LCC_ranked[:5]}')
-            print(f'Bottom ranked: {LCC_ranked[-5:]}')
         
         # Obtains PPI attentions
         PPI_attentions = []
@@ -687,8 +707,8 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
             except:
                 pass
 
-        fake_LCC_attentions = generate_fake_attentions(PPI, len(LCC_attentions), gene_attentions, node_to_index)
-        fake_PPI_attentions = generate_fake_attentions(PPI, len(PPI_attentions), gene_attentions, node_to_index) 
+        fake_LCC_attentions = generate_fake_attentions(PPI, len(LCC_attentions), gene_attentions, min_threshold = epsilon)
+        fake_PPI_attentions = generate_fake_attentions(PPI, len(PPI_attentions), gene_attentions, min_threshold = epsilon) 
         PPI_LCC_attentions = random.sample(PPI_attentions, len(LCC_attentions))
 
         # Generates 'real' and 'fake' labels for attentions
@@ -707,34 +727,26 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
 
         # Generates PPI-based attentions 
         PPI_fake_attentions = fake_PPI_attentions + PPI_attentions
-        '''
-        # REMOVE - FOR TESTING DEMENTIA LCC
-        disease_genes = isolate_disease_genes('dementia')
-        dementia_LCC = LCC_genes(PPI, disease_genes, subgraph = True)
-        dementia_attentions = []
-        for u, v in dementia_LCC.edges():
-            try:
-                attention = PPI[u][v]['attention']
-                if not isinstance(attention, list):
-                    # Bulks up size by sampling 3 times
-                    dementia_attentions += [attention] * 3
-            except:
-                pass
-        
-        if len(dementia_attentions) > len(LCC_attentions):
-            dementia_attentions = random.sample(dementia_attentions, len(LCC_attentions))
-        else:
-            sampled_dementia = random.sample(dementia_attentions * 20, len(LCC_attentions) - len(dementia_attentions))
-            dementia_attentions += sampled_dementia
-
-        dem_attentions = fake_LCC_attentions + dementia_attentions
-        '''
 
         # Assuming you have y_pred as the predicted labels (0 or 1) and y_prob as predicted probabilities for the positive class
         fpr1, tpr1, _ = roc_curve(LCC_labels, fake_attentions)
         fpr2, tpr2, _ = roc_curve(LCC_labels, PPI_LCC_attentions)
         fpr3, tpr3, _ = roc_curve(PPI_labels, PPI_fake_attentions)
-        #fpr4, tpr4, _ = roc_curve(LCC_labels, dem_attentions)
+
+        # Saves FPR/TPR data
+        if save == True:
+            data = {
+                'LCC-background FPR': fpr1,
+                'LCC-background TPR': tpr1,
+                'LCC-PPI FPR': fpr3,
+                'LCC-PPI': tpr3,
+                'PPI-background FPR': fpr2, 
+                'PPI-background TPR': tpr2
+            }
+
+            data = pd.DataFrame.from_dict(data, orient = 'index')
+            data = data.transpose()
+            data.to_csv(f'disease_ROC_{keyword}.csv')
 
         # Compute AUC for precision-recall curve
         LCC_auc = auc(fpr2, tpr2)
@@ -751,17 +763,16 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         # Graphs curves if specified
         if graph == True:
             plt.figure(figsize = (10, 7))
-            plt.xlabel('False Positive Rate')
-            plt.ylabel('True Positive Rate')
+            plt.xlabel('False Positive Rate', fontsize = 12)
+            plt.ylabel('True Positive Rate', fontsize = 12)
             plt.xlim([-.05, 1.05])
             plt.ylim([0, 1.05])
             plt.plot([0, 1], [0, 1], color = 'navy', lw = 2, linestyle = '--', label = 'Random')
             plt.title('ROC Curve for Finetuned Cardiomyopathy Geneformer Attentions \n (n = 10,000 samples)')
-            plt.plot(fpr2, tpr2, color = 'purple', label = f'LCC attentions to PPI attentions \n (AUC: {round(LCC_auc, 4)})')
-            plt.plot(fpr1, tpr1, color = 'blue', label = f'LCC attentions to Background \n attentions (AUC: {round(fake_auc, 4)})')
-            plt.plot(fpr3, tpr3, color = 'green', label = f'PPI attentions to Background \n attentions (AUC: {round(PPI_auc, 4)})')
-            #plt.plot(fpr4, tpr4, color = 'orange', label = f'Dementia LCC attentions to Background \n attentions (AUC: {round(dem_auc, 4)})')
-            plt.legend(loc='lower right')#, bbox_to_anchor=(0, 0.2), ncol=1, fontsize = 8)
+            #plt.plot(fpr2, tpr2, color = 'purple', label = f'LCC attentions to PPI attentions \n (AUC: {round(LCC_auc, 4)})')
+            plt.plot(fpr1, tpr1, color = 'blue', label = f'LCC-Background Prediction \n (AUC: {round(fake_auc, 3)})')
+            plt.plot(fpr3, tpr3, color = 'green', label = f'PPI-Background Prediction \n (AUC: {round(PPI_auc, 3)})')
+            plt.legend(loc='lower right', fontsize = 12)#, bbox_to_anchor=(0, 0.2), ncol=1, fontsize = 8)
     
             if keyword:
                 plt.savefig(f'LCC-PPI-fake_precision_{keyword}.png')
@@ -776,104 +787,388 @@ def F1_graph_attention(PPI, gene_attentions, LCC = None, show = True, graph = Tr
         for u, v in PPI.edges():
             try:
                 attention = PPI[u][v]['attention']
-                if not isinstance(attention, list):
-                    real_attentions.append(attention)
+                real_attentions.append(attention)
             except:
                 pass
-     
-        # Geneates fake attentions
-        fake_attentions = generate_fake_attentions(PPI, len(real_attentions), gene_attentions, node_to_index)
+
+        # Generates fake attentions
+        fake_attentions = generate_fake_attentions(PPI, len(real_attentions), gene_attentions, min_threshold = epsilon)
+        background_attentions = generate_fake_attentions(PPI, len(real_attentions), gene_attentions, min_threshold = epsilon,
+                                                         respect_PPI = False)
         
+        print(f'Background mean: {np.mean(background_attentions)}')
+        print(f'PPI mean: {np.mean(real_attentions)}')
+        print(f'Fake mean: {np.mean(fake_attentions)}')
+
         # Generates 'real' and 'fake' labels for attentions
         fake_labels = [0 for _ in range(len(fake_attentions))] 
+        background_fake_labels = [0 for _ in range(len(background_attentions))]
         real_labels = [1 for _ in range(len(real_attentions))]
         
         # Combines labels
-        labels = fake_labels + real_labels
-        attentions = fake_attentions + real_attentions
+        fake_labels = fake_labels + real_labels
+        background_labels = background_fake_labels + real_labels
+        fake_attentions = fake_attentions + real_attentions
+        background_attentions = background_attentions + real_attentions
         
         # Assuming you have y_pred as the predicted labels (0 or 1) and y_prob as predicted probabilities for the positive class
-        fpr, tpr, _ = roc_curve(labels, attentions)
+        fpr1, tpr1, _ = roc_curve(fake_labels, fake_attentions)
+        fpr2, tpr2, _ = roc_curve(background_labels, background_attentions)
         
-        # Compute AUC for precision-recall curve
-        pr_auc = auc(fpr, tpr)
+        # Compute AUC for ROC curve
+        auc1 = auc(fpr1, tpr1)
+        auc2 = auc(fpr2, tpr2)
         
+        # Prints AUC scores
         if show == True:
-            print(f'AUC score: {pr_auc}')
+            print(f'Fake-PPI AUC scores: {auc1}')
+            print(f'Background-PPI AUC scores: {auc2}')
     
+        if save == True:
+            data = {
+                'PPI-fake FPR': fpr1,
+                'PPI-fake TPR': tpr1,
+                'PPI-background FPR': fpr2,
+                'PPI-background TPR': tpr2
+            }
+
+            data = pd.DataFrame.from_dict(data, orient = 'index')
+            data = data.transpose()
+            data.to_csv(f'AUC_scores_{keyword}.csv', index = False)
+
         # Plots AUC curve
         if graph == True:
-            plt.figure()#figsize = (12, 8))
-            plt.xlabel('False Positive Rate')
-            plt.ylabel('True Positive Rate')
+            plt.figure()
+            plt.xlabel('False Positive Rate', fontsize = 12)
+            plt.ylabel('True Positive Rate', fontsize = 12)
             plt.xlim([-0.05, 1.0])
             plt.ylim([0, 1.05])
-            plt.plot([0, 1], [0, 1], color = 'navy', lw = 2, linestyle = '--', label = 'Random')
-            plt.title('ROC Curve for Finetuned Cardiomyopathy Geneformer Attentions \n (n = 10,000)')
-            plt.plot(fpr, tpr, color = 'green', label = f'PPI attentions to background attentions \n (AUC: {round(pr_auc, 4)})')
-            plt.legend(loc='lower right')#, bbox_to_anchor=(0, 0.2), ncol=1)
+            plt.plot([0, 1], [0, 1], color = 'navy', lw = 2, linestyle = '--',)
+            plt.plot(fpr1, tpr1, color = 'green', label = f'PPI-Fake PPI Attentions \n (AUC: {round(auc1, 4)})')
+            #plt.plot(fpr2, tpr2, color = 'blue', label = f'PPI-Background Attentions \n (AUC: {round(auc2, 4)})')
+            plt.legend(loc='lower right', fontsize = 12)#, bbox_to_anchor=(0, 0.2), ncol=1)
             plt.tight_layout()
             if keyword:
                 plt.savefig(f'PPI_precision_{keyword}.png')
             else:
                 plt.savefig('PPI_precision.png')
         
-        return pr_auc
+        return auc1, auc2
         
 # Processes a list of attention values and a PPI network to obtain a list of mapped and unmapped attentions, cutting off at a specific threshold
-def process_edges(PPI, attention_dict, min_threshold = 0.00001):
+def process_edges(PPI, attention_dict, min_threshold = None):
     real_attentions = []
     total_attentions = []
 
-    # Obtains true edges
+    # Obtains true edges from graph
     total_edges = list(PPI.edges())
     with tqdm.tqdm(total=len(total_edges), desc='Processing Edges') as pbar:
         for u, v in total_edges:
             try:
                 attention = PPI[u][v]['attention']
-                if not isinstance(attention, list):
-                    real_attentions.append(attention)
+                real_attentions.append(attention)
             except KeyError:
                 pass
             pbar.update()
 
-    # Obtains all edges
-    total_attentions = []
-    for val in attention_dict.values():
-        total_attentions.extend([i for i in list(val.values()) if not isinstance(i, list)])
+    # Flattens dictionary to a list of values
+    total_attentions = [value for _, inner_dict in attention_dict.items()
+                      for _, value in inner_dict.items() if not isinstance(value, list)]
         
-    # Checks all edges by threshold
-    real_attentions = [i for i in real_attentions if i > min_threshold]
-    total_attentions = [i for i in total_attentions if i > min_threshold]
+    # Filters edges if a threshold exists
+    if min_threshold:
+        real_attentions = [i for i in real_attentions if i > min_threshold]
+        total_attentions = [i for i in total_attentions if i > min_threshold]
     
     return real_attentions, total_attentions
+
+# Primary function for community detection
+def community_detection(PPI, 
+                        attention_dict, 
+                        disease  = 'cardiomyopathy hypertrophic', 
+                        keyword = None,
+                        use_geneformer_ppi=True, 
+                        compare_with_lcc=True,
+                        max = True, 
+                        node_num = 10):
+
+
+    # Obtain disease genes
+    disease_genes = isolate_disease_genes(disease, filter_strong=False)
+    LCC_nodes = LCC_genes(PPI, disease_genes, subgraph=True) if compare_with_lcc else None
+    strong_genes = isolate_disease_genes(disease, filter_strong=True)
+    
+    print('Generating Networks...')
+    # Define the network for analysis
+    if use_geneformer_ppi:
+        network_for_analysis = nx.DiGraph()
+        for source, targets in tqdm.tqdm(attention_dict.items(), total = len(attention_dict), desc = 'Creating GF PPI'):
+            for target, weight in targets.items():
+                # Ensure that the edge (u, v) has the maximum weight of attention_dict[u][v] and attention_dict[v][u]
+                try:
+                    if max == True:                    
+                        weight = np.max((weight, attention_dict[target][source]))
+                    else:
+                        try:
+                            weight = np.mean([weight, attention_dict.get(target, {}).get(source, 0)])
+                        except:
+                            continue
+                    if not isinstance(weight, list):
+                        network_for_analysis.add_edge(source, target, weight=weight)
+
+                except:
+                    pass
+
+        # Perform disparity filtration on PPI
+        try:
+            network_for_analysis = disparity_filter(network_for_analysis)
+        except:
+            print('Disparity filtration not working! Passing..')
+
+        # Find all isolated nodes
+        isolated_nodes = list(nx.isolates(network_for_analysis))
+
+        # Remove isolated nodes from the graph
+        network_for_analysis.remove_nodes_from(isolated_nodes)
+        network_nodes = {count + 1:i for count, i in enumerate(network_for_analysis.nodes())}
+
+        # Calculate Degree Centrality and Strength of Nodes
+        degree_centrality = dict(network_for_analysis.degree())
+        strength_of_nodes = {node: sum([attr['weight'] for _, _, attr in network_for_analysis.edges(node, data=True)]) for node in network_for_analysis.nodes()}
+
+        # Identify Top Nodes by Degree and Strength
+        top_nodes_by_degree = sorted(degree_centrality.items(), key=lambda item: item[1], reverse=True)
+        top_nodes_by_strength = sorted(strength_of_nodes.items(), key=lambda item: item[1], reverse=True)
+
+        top_degree_nodes = top_nodes_by_degree[:node_num]
+        top_strength_nodes = top_nodes_by_strength[:node_num]
+
+        # Analysis of Top Nodes
+        print("Top nodes by degree centrality:")
+        for node, degree in top_degree_nodes:
+            print(f"Node: {node}, Degree: {degree}")
+
+        print("\nTop nodes by strength:")
+        for node, strength in top_strength_nodes:
+            print(f"Node: {node}, Strength: {strength}")
+
+        # Step 5: Compare with LCC and Disease Genes
+        # Assuming LCC_nodes and disease_genes are already defined
+        lcc_nodes = set(LCC_nodes)
+        disease_genes = set(disease_genes)
+
+        top_strength_genes = set([node for node, _ in top_strength_nodes])
+        overlap_with_lcc = top_strength_genes.intersection(lcc_nodes)
+        overlap_with_disease_genes = top_strength_genes.intersection(disease_genes)
+
+        print(f"\nOverlap between top strength genes and LCC: {overlap_with_lcc}")
+        print(f"Overlap between top strength genes and disease genes: {overlap_with_disease_genes}")
+
+    else:
+        network_for_analysis = PPI
+
+    if not strong_genes:
+        raise ValueError("No strong disease genes found.")
+    start_node = random.choice(list(strong_genes))
+    
+    bidirectional_network = network_for_analysis.to_undirected()
+
+    # Perform Random Walk with Restart
+    walk = random_walk_with_restart(bidirectional_network, start_node)
+
+    # Analyze the visitation frequencies
+    visitation_frequencies = analyze_visitation_frequencies(walk)
+
+    # Detect communities
+    visited_nodes = list(visitation_frequencies.keys())
+    partition = detect_communities(bidirectional_network, visited_nodes)
+    
+    print('Greedy communities..')
+    # Detect communities using Girvan-Newman algorithm
+    girvan_newman_communities = detect_communities_greedy(bidirectional_network)
+
+    # Reference set for comparison
+    reference_nodes_set = set(LCC_nodes) if compare_with_lcc else set(PPI.nodes())
+
+    print('Comparing communities')
+    # Compare identified communities
+    community_nodes_set = set(partition.keys())
+    girvan_newman_nodes_set = set.union(*map(set, girvan_newman_communities))
+    
+    # Run DIAMOnD analysis
+    diamond_nodes = DIAMOnD(network_for_analysis, seed_genes=strong_genes, max_number_of_added_nodes=len(LCC_nodes), alpha=1)
+    diamond_nodes_set = set(diamond_nodes)
+    
+    # Comparing with reference set (either LCC or original PPI)
+    for method, community_set in [("Random Walk", community_nodes_set), ("Girvan-Newman", girvan_newman_nodes_set), ("DIAMOND", diamond_nodes_set)]:
+        similarity = jaccard_similarity(reference_nodes_set, community_set)
+        added_nodes = community_set - reference_nodes_set
+        removed_nodes = reference_nodes_set - community_set
+
+        print(f"{method} Jaccard Similarity: {similarity}")
+        print(f"{method} # Nodes added: {len(added_nodes)}")
+        print(f"{method} # Nodes removed: {len(removed_nodes)}")
+
+    # Advanced network comparison (for PPI)
+    if use_geneformer_ppi == True:
+        community_subgraph = bidirectional_network.subgraph(community_nodes_set)
+        girvan_newman_subgraph = bidirectional_network.subgraph(girvan_newman_nodes_set)
+        diamond_subgraph = bidirectional_network.subgraph(diamond_nodes_set)
+        compare_networks(PPI, community_subgraph, LCC_nodes)
+        compare_networks(PPI, girvan_newman_subgraph, LCC_nodes)
+        compare_networks(PPI, diamond_subgraph, LCC_nodes)
+
+# Arthritis comorbids: ['arthritis\nrheumatoid',  'osteoporosis', 'cardiovascular\ndiseases', 'lupus\nerythematosus\nsystemic',]
+# Cardiomyopathy comorbids: diseases = ['cardiomyopathy\nhypertrophic', 'calcinosis', 'cardiomyopathy\ndilated', 'anemia', 'hypertension',]
+# Performs cormobidity analysis
+def comorbidity_analysis(PPI, attention_dict, keyword=None, bulk_comparison=True,
+                         comorbid=['cardiomyopathy\nhypertrophic', 'cardiomyopathy\ndilated', 'anemia', 'atrial\nfibrillation', 'diabetes\nmellitus\ntype\n2', 'hypertension', 'coronary\nartery\ndisease'],
+                         save=True, background=['dementia', 'covid', 'parkinsonian\ndisorder', 'dwarfism', 'hepatitis\nb', 'kidney\nfailure\nchronic', 'calcinosis']):
+    
+    # Function for plottng histograms for comorbid and background weights
+    def plot_histogram(comorbid_weights, background_weights, keyword, index):
+        plt.figure()
+        comorbid_weights, background_weights = np.array(comorbid_weights), np.array(background_weights)
+        comorbid_weights, background_weights = comorbid_weights[~np.isnan(comorbid_weights)], background_weights[~np.isnan(background_weights)]
+        stack = (comorbid_weights, background_weights)
+        bins = np.histogram(np.hstack(stack), bins=30)[1]
+        plt.hist(comorbid_weights, bins=bins, color='red', label='Comorbidities', alpha=0.5)
+        plt.hist(background_weights, bins=bins, color='blue', label='Background', alpha=0.5)
+        plt.ylabel('Frequency')
+        plt.xlabel('Attention weights')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f'Comorbidity_bulk_{keyword}_{index}.png')
+
+    
+    # Combine comorbid and background diseases into a single list
+    diseases = comorbid + background
+    disease_sets, LCC_sets = {}, {}
+
+    # Function to calculate the average weight along a path
+    def avg_weight_of_path(path):
+        return np.mean([max(attention_dict[path[i]][path[i+1]], attention_dict[path[i+1]][path[i]]) for i in range(len(path)-1)]) if len(path) > 1 else 0
+
+    # Function to analyze and visualize disease interaction weights
+    def analyze_weights(disease_sets, pairwise=True):
+        weights = {}
+        for disease, genes in disease_sets.items():
+            weights[disease] = {}
+            for target_disease, target_genes in disease_sets.items():
+                if disease != target_disease:
+                    # Calculate average weight for each pair of diseases
+                    weights[disease][target_disease] = np.mean([max(attention_dict[gene1][gene2], attention_dict[gene2][gene1]) for gene1 in genes for gene2 in target_genes if gene1 in attention_dict and gene2 in attention_dict])
+
+        # Create a matrix and heatmap for the disease interaction weights
+        matrix = np.array([[0 if disease == target_disease else weights[disease][target_disease] for target_disease in diseases] for disease in diseases])
+        max_value = np.max([i for j in matrix for i in j])
+        if save:
+            np.savetxt(f"matrix_{keyword}_{'1' if pairwise else '2'}.csv", matrix, delimiter=",")
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(matrix, annot=False, fmt=".2f", xticklabels=diseases, yticklabels=diseases, vmax=max_value)
+        plt.title("Disease Interaction Average Weights")
+        plt.xlabel("Target Disease")
+        plt.ylabel("Disease")
+        plt.tight_layout()
+        plt.savefig(f'comorbidity_heatmap_{1 if pairwise else 2}_{keyword}.png')
+
+    # If bulk_comparison is False, perform pairwise and LCC analysis
+    if not bulk_comparison:
+        for disease in tqdm.tqdm(diseases, total=len(diseases), desc='Obtaining Given LCCs'):
+            disease_genes = isolate_disease_genes(disease)
+            LCC_nodes = LCC_genes(PPI, disease_genes, subgraph=True)
+            disease_sets[disease] = disease_genes
+            LCC_sets[disease] = LCC_nodes
+
+        # Perform pairwise analysis for all diseases
+        analyze_weights(disease_sets)
         
+        # Calculate and visualize average weights between LCCs
+        LCC_weights = {}
+        for key, LCC in tqdm.tqdm(LCC_sets.items(), total=len(LCC_sets), desc='Processing shortest paths..'):
+            LCC_weights[key] = {}
+            for sub_key, sub_LCC in LCC_sets.items():
+                if key != sub_key:
+                    LCC_weights[key][sub_key] = np.mean([avg_weight_of_path(nx.shortest_path(source=gene1, target=gene2)) for gene1 in LCC for gene2 in sub_LCC])
+
+        # Perform LCC analysis for all LCCs
+        analyze_weights(LCC_weights, pairwise=False)
+    
+    else:  # If bulk_comparison is True, perform bulk analysis
+        comorbid = comorbid + ['kidney\nfailure\nchronic', 'calcinosis']
+        background_diseases = isolate_background_genes(comorbid, filter_strong=True, num_LCCs=50)
+        target_disease = comorbid[0]
+        target_disease_genes = isolate_disease_genes(target_disease)
+        LCC_nodes = LCC_genes(PPI, target_disease_genes, subgraph=True)
+
+        total_comorbid, total_background = [], []
+
+        # Analysis 1: Calculate and visualize attention weights for comorbid and background diseases
+        for disease in comorbid[1:]:
+            disease_genes = isolate_disease_genes(disease)
+            comorbid_weights = [max(attention_dict[gene][target_gene], attention_dict[target_gene][gene]) for gene in disease_genes for target_gene in target_disease_genes if gene in attention_dict and target_gene in attention_dict]
+            total_comorbid.append(np.mean(comorbid_weights))
+
+        for disease in background_diseases:
+            disease_genes = isolate_disease_genes(disease)
+            background_weights = [max(attention_dict[gene][target_gene], attention_dict[target_gene][gene]) for gene in disease_genes for target_gene in target_disease_genes if gene in attention_dict and target_gene in attention_dict]
+            total_background.append(np.mean(background_weights))
+
+        # Plot histograms for comorbid and background weights
+        plot_histogram(total_comorbid, total_background, keyword, 1)
+
+        # Analysis 2: Calculate and visualize average weights between comorbidities and backgrounds
+        comorbid_weights, background_weights = [], []
+        for disease in tqdm.tqdm(comorbid[1:], total=len(comorbid[1:]), desc='Comorbidity paths'):
+            disease_genes = isolate_disease_genes(disease)
+            disease_LCC = LCC_genes(PPI, disease_genes, subgraph=True)
+            comorbid_weights.append(np.mean([avg_weight_of_path(nx.shortest_path(source=gene1, target=gene2)) for gene1 in LCC_nodes for gene2 in disease_LCC]))
+
+        for disease in tqdm.tqdm(background_diseases, total=len(background_diseases), desc='Background paths'):
+            disease_genes = isolate_disease_genes(disease)
+            disease_LCC = LCC_genes(PPI, disease_genes, subgraph=True)
+            background_weights.append(np.mean([avg_weight_of_path(nx.shortest_path(source=gene1, target=gene2)) for gene1 in LCC_nodes for gene2 in disease_LCC]))
+
+        # Plot histograms for comorbid and background weights
+        plot_histogram(comorbid_weights, background_weights, keyword, 2)
+                
+
 # Plots attention distributions for background or a PPI/disease if specified
-def plot_distributions(attention_dict, disease = None, graph = True, downsample = True, keyword = None,
-                       epsilon = 0.00001, ratio_comparisons = True):    
+def plot_distributions(attention_dict, disease = None, graph = True, keyword = None,
+                       epsilon = 10e-6, ratio_comparisons = False,
+                       save = True):    
         
+    # Plots distributions without a disease
     if disease == None:
       
         # Instantiates PPI 
         PPI = instantiate_ppi()
         PPI, _, _ = map_attention_attention(PPI, attention_dict)
-        
+
         # Parallel processing to extract attentions
-        real_attentions, total_attentions = process_edges(PPI, attention_dict)
-        real_attentions = [i for i in real_attentions if not isinstance(i, list)]
-        total_attentions = [i for i in total_attentions if not isinstance(i, list)]
+        real_attentions, total_attentions = process_edges(PPI, attention_dict, min_threshold = epsilon)
+        PPI_fake = generate_fake_attentions(PPI, len(PPI), attention_dict, respect_PPI = True, min_threshold = epsilon)
+
+        # Saves data
+        if save == True:
+            with open(f'PPI_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(random.sample(real_attentions, 1000), f)
+            with open(f'total_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(total_attentions, f)
+            with open(f'PPI_fake_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(random.sample(PPI_fake, 1000), f)
 
         # Plot CDF
         if graph == True:
             plt.figure()
             sns.ecdfplot(total_attentions, color='red', label=f'Background Attentions')# (n={len(total_attentions)})')
             sns.ecdfplot(real_attentions, color='green', label=f'PPI Attentions')# (n={len(real_attentions)})')
+            sns.ecdfplot(PPI_fake, color='black', label=f'PPI Fake Attentions')
             plt.xlabel('Attention Weights')
             plt.ylabel('Cumulative Probability')
             plt.legend(loc='lower right')
             plt.xscale('log')
             plt.xlim(0, 0.1)
-            plt.title('Cumulative Distribution of Attention Weights for PPI Network vs Background')
             plt.tight_layout()
 
             # Save the plot
@@ -881,7 +1176,10 @@ def plot_distributions(attention_dict, disease = None, graph = True, downsample 
                 plt.savefig(f'PPIAttentionDist_{keyword}.png')
             else:
                 plt.savefig('PPIAttentionDist.png')
+
+        
     else:
+        # Plots distribution with a disease module
         # Instantiates PPI 
         PPI = instantiate_ppi()
         PPI, _, _ = map_attention_attention(PPI, attention_dict)
@@ -906,6 +1204,18 @@ def plot_distributions(attention_dict, disease = None, graph = True, downsample 
         PPI_attentions = [i for i in PPI_attentions if not isinstance(i, list)]
         connected_attentions = [i for i in connected_attentions if not isinstance(i, list)]
 
+        # Saves data
+        if save == True:
+            with open(f'LCC_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(real_attentions, f)
+            with open(f'total_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(random.sample(total_attentions, 10000), f)
+            with open(f'PPI_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(random.sample(PPI_attentions, 10000), f)
+            with open(f'connected_attentions_{keyword}.pkl', 'wb') as f:
+                pk.dump(connected_attentions, f)
+
+
         # Performs basic comparisons if enabled
         if ratio_comparisons == True:
 
@@ -927,108 +1237,21 @@ def plot_distributions(attention_dict, disease = None, graph = True, downsample 
             
             print(f'At 10e-3, background {len([i for i in total_attentions if i > 10e-3])/len(total_attentions)}, PPI {len([i for i in PPI_attentions if i > 10e-3])/len(PPI_attentions)}, LCC {len([i for i in real_attentions if i > 10e-3])/len(real_attentions)}')
             print(f'At 10e-2, background {len([i for i in total_attentions if i > 10e-2])/len(total_attentions)}, PPI {len([i for i in PPI_attentions if i > 10e-2])/len(PPI_attentions)}, LCC {len([i for i in real_attentions if i > 10e-2])/len(real_attentions)}')
-            
-            # Makes a fit on the equation
-            def fit_equation(tt, yy, fit_type = 'logistic'):
-                tt, yy = np.array(tt), np.array(yy)
-
-                if fit_type == 'exponential':
-                    guess_A = tt[0]
-                    guess_x = tt[2] / tt[1]
-                    guess_C = 0
-                    guess = np.array([guess_A, guess_x, guess_C])
-                    def exp(t, A, x, C): return A * pow(math.e, x * t) + C
-                    popt, pcov = optimize.curve_fit(exp, tt, yy, p0 = guess, maxfev = 5000)
-                    A, x, C = popt
-                    fitfunc = lambda t: A * pow(math.e, x * t) + C
-         
-                elif fit_type == 'quadratic':
-                    guess_a = tt[0]
-                    guess_b = tt[2] / tt[1]
-                    guess_c = 0
-                    guess = np.array([guess_a, guess_b, guess_c])
-                    def quad(t, a, b, c): return (a ** 2) * t + b * t + c
-                    popt, pcov = optimize.curve_fit(quad, tt, yy, p0 = guess, maxfev = 5000)
-                    a, b, c = popt
-                    fitfunc = lambda t: (t ** 2) * a + b * t + c
-            
-                elif fit_type == 'cubic':
-                    guess_a = tt[0]
-                    guess_b = tt[2] / tt[1]
-                    guess_c = tt[3]/tt[2]
-                    guess_d = 0
-                    guess = np.array([guess_a, guess_b, guess_c, guess_d])
-                    def cube(t, a, b, c, d): return (t ** 3) * a + (t ** 2) * b + t * c + d
-                    popt, pcov = optimize.curve_fit(cube, tt, yy, p0 = guess, maxfev = 5000)
-                    a, b, c, d = popt
-                    fitfunc = lambda t: (t ** 3) * a + (t ** 2) * b + t * c + d
-                
-                elif fit_type == 'logistic':
-                    guess_L = tt[0]
-                    guess_k = tt[2] / tt[1]
-                    guess_b = tt[3]/tt[2]
-                    guess = np.array([guess_L, guess_k, guess_b])
-                    def logistic(t, L, k, b): return L - (1 + b * math.e ** (-k * t))
-                    popt, pcov = optimize.curve_fit(logistic, tt, yy, p0 = guess, maxfev = 5000)
-                    L, k, b = popt
-                    fitfunc = lambda t: L - (1 + b * math.e ** (-k * t))
-
-                elif fit_type == 'logistic_5':
-                    guess_a = tt[0]
-                    guess_b = tt[1]
-                    guess_c = tt[2]
-                    guess_d = tt[3]
-                    guess_e = tt[4]
-                    guess = np.array([guess_a, guess_b, guess_c, guess_d, guess_e])
-                    def log5(t, a, b, c, d, e): return a + ((d - a) / (1 - (t/c)**b) ** e)
-                    popt, _ = optimize.curve_fit(log5, tt, yy, p0 = guess, maxfev = 5000)
-                    a, b, c, d, e = popt
-                    fitfunc = lambda t: a + ((d - a) / (1 - (t/c)**b) ** e)
-
-                return fitfunc
-            
-            #Plots results
-            plt.figure()
-            plt.xlabel('Attention Weight Threshold')
-            plt.ylabel('Proportion of Distribution Greater than Threshold')
-            conditions = ['Background Attentions', 'PPI Attentions', "Connected Attentions", "LCC Attentions"]
-            colors = ["red", "green", "orange", "blue"]
-            plt.xscale('log')
-
-            for num, condition in enumerate(conditions):
-                yy = [i[num] for i in remaining_proportions]
-                plt.plot(proportions, yy, color = colors[num], label = f"{condition} ratio")
-                equation = fit_equation(tt = proportions, yy = yy)
-                yy = equation(np.array(proportions))
-                plt.plot(proportions, yy, color = colors[num], linestyle = '--', label = f"{condition} fit")
-
-            plt.legend()
-            plt.savefig(f"{keyword}_ProportionRatios")
-            
-        '''
-        # DEMENTIA LCC TESTING
-        disease_genes = isolate_disease_genes('dementia')
-        dementia_LCC = LCC_genes(PPI, disease_genes, subgraph = True)
-        dementia_attentions, _ = process_edges(PPI=dementia_LCC, attention_dict = attention_dict, min_threshold = 0.00001)
-        dementia_attentions = [i for i in dementia_attentions if not isinstance(i, list)]
-        '''
-
+    
         # Plot CDF
         if graph == True:
             plt.figure()
             sns.ecdfplot(total_attentions, color='red', label=f'Background Attentions')# (n={len(total_attentions)})')
             sns.ecdfplot(real_attentions, color='blue', label=f'LCC Attentions')# (n={len(real_attentions)})')
             sns.ecdfplot(PPI_attentions, color='green', label=f'PPI Attentions')# (n={len(PPI_attentions)})')
-            sns.ecdfplot(connected_attentions, color='orange', label=f'Fully Connected \n Disease Attentions')# (n={len(connected_attentions)})')
-            #sns.ecdfplot(dementia_attentions, color='orange', label=f'Dementia LCC Attentions')
-            
+            sns.ecdfplot(connected_attentions, color='orange', label=f'GDA Disease \n Attentions')# (n={len(connected_attentions)})')
 
             plt.xlabel('Attention Weights')
             plt.ylabel('Cumulative Probability')
             plt.legend(loc='lower right')
             plt.xscale('log')
-            plt.title('Cumulative Distribution of Attention Weights for PPI Network vs Background')
             plt.tight_layout()
+
             # Save the plot
             if keyword:
                 plt.savefig(f'LCCPPIAttentionDist_{keyword}.png')
@@ -1037,7 +1260,6 @@ def plot_distributions(attention_dict, disease = None, graph = True, downsample 
 
 
 # Performs analysis of attention weights
-
 def analyze_hops(attention_dict, CDF = False,
                 diseases = ['Small Cell Lung Carcinoma', 'Cardiomyopathy Dilated', 'Cardiomyopathy Hypertrophic'], top_weights = 10000, shortest_hop = False, keyword = None):
     PPI = instantiate_ppi()
@@ -1361,7 +1583,7 @@ def merge_dictionaries(dictionaries, mean = True):
     return dict(merged_dict)
     
 # Creates a new PPI from the top Geneformer attention weights
-def generate_PPI(attention_dict, attention_threshold = None, gene_conversion = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl"), save = False,
+def generate_PPI(attention_dict, attention_threshold = None, gene_conversion = Path("/work/ccnr/GeneFormer/GeneFormer_repo/geneformer/gene_name_id_dict.pkl"), save = True,
                   savename = 'Attention_PPI.csv', disparity_filter = True):
         
     # Creates conversion from tokens back to genes
@@ -1415,7 +1637,6 @@ def generate_PPI(attention_dict, attention_threshold = None, gene_conversion = P
         PPI = nx.DiGraph()
         for src, tgt, weight in sorted_tuples:
             PPI.add_edge(src, tgt, attention=weight)
-        print(PPI)
   
     # If enabled, saves the PPI as a csv
     if save == True:
@@ -1427,7 +1648,8 @@ def generate_PPI(attention_dict, attention_threshold = None, gene_conversion = P
     
 # Compares the changes between two groups of attention weights
 def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, perturb = False,
-                       max_bidirectional = True, disease = None, top_proportion = 1000, epsilon = 0.0001):
+                       max_bidirectional = True, disease = None, top_proportion = 1000, epsilon = 0.0001,
+                       save = True):
 
 
     # Obtains the p_value of comparisons
@@ -1492,10 +1714,6 @@ def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, pe
                     fold_changes[source][target] = compare_attention / (attention + epsilon)
                 else:
                     fold_changes[source][target] = 1
-
-    print(compare[list(compare.keys())[0]])
-    print(len(base))
-    print(len(compare))
     
     print(f'Comparison source genes: {len(comparison.keys())}')
     print(f'Total comparisons: {sum([len(i) for i in comparison.values()])}')
@@ -1540,7 +1758,7 @@ def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, pe
                 if node1 != node2:
                     connected_LCC_comparison.append((node1, node2))
 
-        def obtain_attentions(base, compare, edge_list, omit_edges = False):
+        def obtain_attentions(base, compare, edge_list, omit_edges = False, num_edges = None):
             base_attentions, compare_attentions = [], []
             
             for edge in edge_list:
@@ -1577,8 +1795,17 @@ def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, pe
                         if not isinstance(base_attention, list) and not isinstance(compare_attention, list):
                             base_attentions.append((edge[0], edge[1], base_attention))
                             compare_attentions.append((edge[0], edge[1], compare_attention))
- 
-            return base_attentions, compare_attentions
+
+            if num_edges != None:
+                filtered_base, filtered_compare = [], []
+                selected_indices = random.sample(range(len(base_attentions)), num_edges)
+                for num, (base, compare) in zip(enumerate(base_attentions, compare_attentions)):
+                    if num in selected_indices:
+                        filtered_base.append(base)
+                        filtered_compare.append(compare)
+                return filtered_base, filtered_compare                    
+            else:
+                return base_attentions, compare_attentions
         
         LCC_base, LCC_compare = obtain_attentions(base, compare, LCC_edges)
         PPI_base, PPI_compare = obtain_attentions(base, compare, PPI_edges)
@@ -1610,6 +1837,18 @@ def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, pe
         background_FC = obtain_fold_change(Background_base, Background_compare)
         connected_FC = obtain_fold_change(LCC_connected_base, LCC_connected_compare)
 
+        # Saves data if enabled
+        if save == True:
+            save_data = {
+                "LCC FC": LCC_FC,
+                "PPI FC": PPI_FC,
+                "Connected FC": connected_FC,
+                "Background FC": background_FC
+            }
+            save_data = pd.DataFrame.from_dict(save_data, orient = 'index')
+            save_data = save_data.transpose()
+            save_data.to_csv(f'FC_{keyword}.csv')
+
         print(f"PPI p-value: {t_test_fold(PPI_FC, background_FC)}")
         print(f"Connected p-value: {t_test_fold(connected_FC, background_FC)}")
         print(f"LCC p-value: {t_test_fold(LCC_FC, background_FC)}")
@@ -1624,19 +1863,26 @@ def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, pe
 
             # Function for calculating intersection of two CDF curves
             def find_intersection(LCC_set, connected_set, LCC_data, connected_data):
-                step = 0.001
-                threshold = None
+                try:
+                    step = 0.001
+                    threshold = None
 
-                for i in np.arange(0, 1, step):
-                    LCC_sample = [j for count, j in enumerate(LCC_data) if LCC_set[count] > i]
-                    connected_sample = [j for count, j in enumerate(connected_data) if connected_set[count] > i]
-                    if LCC_sample[0] < connected_sample[0]:
-                        threshold = i
-                        if threshold > 0.6:
-                            break
-                print(f'Cut-off at a probability of {threshold}')
-                return LCC_sample[0]
-            
+                    for i in np.arange(0, 1, step):
+                        LCC_sample = [j for count, j in enumerate(LCC_data) if LCC_set[count] > i]
+                        connected_sample = [j for count, j in enumerate(connected_data) if connected_set[count] > i]
+                        if LCC_sample[0] < connected_sample[0]:
+                            threshold = i
+                            if threshold > 0.6:
+                                break
+
+                    print(f'Cut-off at a probability of {threshold}')
+                    try:
+                        return LCC_sample[0]
+                    except:
+                        return 1
+                except:
+                    return 1
+
             # Finds intersection of connected LCC and LCC edges
             LCC_cdf, LCC_x = calculate_cdf([i[2] for i in LCC_FC])
             connected_cdf, connected_x = calculate_cdf([i[2] for i in connected_FC])
@@ -1675,7 +1921,7 @@ def compare_attentions(base, compare, LCC = None, PPI = None, keyword = None, pe
         print(f'Average LCC FC: {np.mean(LCC_FC_num)}')
         print(f'Average PPI FC: {np.mean(PPI_FC_num)}')
         print(f'Average Background FC: {np.mean(background_FC_num)}')
-
+        plt.xlim([10e-3, 10e2])
         sns.ecdfplot(LCC_FC_num, color='blue', label='LCC Fold Change')
         sns.ecdfplot(PPI_FC_num, color='green', label='PPI Fold Change')
         sns.ecdfplot(background_FC_num, color='red', label='Background Fold Change')
@@ -1829,3 +2075,42 @@ def find_intermediaries(comparison_dict, PPI, LCC, disease_genes, top_pairs = 5,
 
 
     return intermediary_scores, direct_scores
+
+# Compares CDF distances for two difference LCC CDFs
+def compare_cdfs(base_LCC, compare_LCC, type = 'KS', LCC_str = None):
+
+    # Preparing data
+    base_data = np.array(sorted(base_LCC[LCC_str]))
+    compare_data = np.array(sorted(compare_LCC[LCC_str]))
+
+    if type == 'KS':
+        # Kolmogorov-Smirnov Statistic
+        ks_statistic, ks_pvalue = stats.ks_2samp(base_data, compare_data)
+        directed_area = ks_statistic
+        if np.mean(base_LCC[LCC_str]) > np.mean(compare_LCC[LCC_str]):
+            directionality = 'positive'
+        else:
+            directionality = 'negative'
+
+    if type == 'EMD':
+        # Earth Mover's Distance (Wasserstein distance)
+        emd = wasserstein_distance(base_data, compare_data)
+        directed_area = emd
+        if np.mean(base_LCC[LCC_str]) < np.mean(compare_LCC[LCC_str]):
+            directionality = 'positive'
+        else:
+            directionality = 'negative'
+    else:
+
+        # Euclidean Distance between CDFs
+        common_x = np.linspace(min(min(base_data), min(compare_data)), max(max(base_data), max(compare_data)), 1000)
+        base_cdf = interpolate.interp1d(base_data, np.linspace(0, 1, len(base_data)), bounds_error=False, fill_value="extrapolate")
+        compare_cdf = interpolate.interp1d(compare_data, np.linspace(0, 1, len(compare_data)), bounds_error=False, fill_value="extrapolate")
+        euclidean_distance = np.sqrt(np.sum((compare_cdf(common_x) - base_cdf(common_x)) ** 2))
+        directed_area = euclidean_distance
+        if np.mean(base_LCC[LCC_str]) < np.mean(compare_LCC[LCC_str]):
+            directionality = 'positive'
+        else:
+            directionality = 'negative'
+
+    return directed_area, directionality
