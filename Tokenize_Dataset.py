@@ -26,6 +26,7 @@ import shutil
 from biomart import BiomartServer
 import requests
 import csv
+from multiprocessing import Pool
 logging.disable(logging.CRITICAL)
 
 # Function to download RNA-seq data from a specific GEO repository
