@@ -46,7 +46,7 @@ Example perturber workflow:
     pert.run_perturbation() # Runs perturbation filtration + analysis
     pert.visualize_similarities() # Visualizes box plot of results
 
-Attentions.py contains the primary attention extraction and analysis class
+Attentions.py contains the primary attention extraction and analysis class. This class samples attention weights from a given number of samples under varying parameters (such as maximum or mean weight aggregation, filtering for specific genes, ect), and then stores them for downstream analysis such as community prediction, disease module validation, and so on. 
 
 Example attention extraction workflow: 
 
