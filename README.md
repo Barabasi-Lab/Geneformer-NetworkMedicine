@@ -47,17 +47,9 @@ Example perturber workflow:
     pert.run_perturbation() # Runs perturbation filtration + analysis
     pert.visualize_similarities() # Visualizes box plot of results
 
-Attentions.py contains the primary attention extraction and analysis class. This class samples attention weights from a given number of samples under varying parameters (such as maximum or mean weight aggregation, filtering for specific genes, ect), and then stores them for downstream analysis such as community prediction, disease module validation, and so on. 
+Running Perturber.py with the --embeddings flag produces an AUC for the ranked cosine similarities applied to the interactomes
 
-Example attention extraction workflow: 
-
-    new_attention = PPI_attention(layer_index = 4, mean = True)  # Uses either mean or maximum (if set to False) to aggregate weights
-    new_attention.scrape_attentions(samples = 1000, disease = None) # Scrapes attentions from 1000 samples. Will focus on genes from a certain disease if a disease is given (ex. Cardiomyopathy Hypertrophic). Case-insensitive
-    new_attention.map_PPI_genes() # Main analysis function for distributions, top attentions, ect. 
-    #new_attention.map_disease_genes(disease = 'Cardiomyopathy Hypertrophic')
-    new_attention.save() # Saves the gene attentions as a pickled dictionary
-    new_attention.gen_attention_PPI(attention_threshold = 0.005) # Generates PPI with the attention weights using the given threshold
-    new_attention.gen_attention_matrix(save = 'attentionMatrix.csv') # Saves the gene-gene attentions as a matrix with the given name
+Jupyter notebooks are available for attention extraction, mapping and analyzing pre-trained/fine-tuned Geneformer with disease modules and interactomes, and community analysis using Geneformer weights. They require packages from the requirements.txt file included in the directory.
 
 ## Cell and Gene Classification
 The two files Cell_classifier.py and Gene_classifier.py contain modularized versions of Geneformer that are appropriate for running inference using Geneformer's sample classifier and gene classifier capabilities.
