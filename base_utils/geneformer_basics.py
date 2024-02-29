@@ -331,12 +331,14 @@ def load_model(task, path = "/work/ccnr/GeneFormer/GeneFormer_repo", n_labels = 
     return model
 
 # runs samples through a given model and outputs the attentions and/or embeddings if requested
-def run_samples(data, model, batch_size, num_workers = 1, attns = None, hiddens = None, output_format = "csv", save_gene_names = False, heads_to_prune = None):
+def run_samples(data, model, batch_size=20, num_workers = 4, attns = None, hiddens = None, output_format = "csv", save_gene_names = False, heads_to_prune = None):
     """
     :param data: dataset, output by the GFDataset class. It should already be padded but not passed to the dataloader
     :param model: the model loaded by the load_model function
-    :param batch_size: int, size of geneformer batch. In general larger batch size  = faster but more memory intensive. With 1 GPU and 128 GB of memory the batch size should usually be kept under 10, but you should optimize for your application
-    :param num_workers: int, the number of processes to run simultaneously. not a parameter we have experimented much with, but it can be used to optimize runtime 
+    :param batch_size: int, size of geneformer batch. In general larger batch size  = faster but more memory intensive. If you are only running samples (i.e. to extract embeddings) the batch size can be set in the 100s. Specifically, setting ntasks = 20 
+        in an sbatch script with 128 GB of memory allows you to run ~150 samples per minute on the short partition with batch size = 200 and num_workers = 4
+    :param num_workers: int, the number of processes to run simultaneously. In experiments with running samples on cpus, this parameter has had no tangible effect on speed or memory, but 4 seems to be a widely used value. The only constraint is that 
+        num_workers must be less than or equal to ntasks in the sbatch script
     :param attns: dict, the attention heads to output. The format should be {l:[h1,h2,h3],...} where the keys are layer indices and the values are lists of attention head indices
     :param hiddens: list, the layer indices from which embeddings should be output. format should be [l1,l2,l3...]. Note that for both attns and hiddens, the corresponding variable must be set to True when loading the model, or there will be no matrices available for output.
     :param output_format: str, must be either csv or pkl. Defaults to csv, which outputs a gzipped csv for each attention head or embedding matrix. For large datasets with many samples this can be changed to pkl to save space.
@@ -569,7 +571,7 @@ def optimize_hyperparams(model_init, classifier_trainset, classifier_evalset, ou
     :param classifier_trainset: the training dataset, from the preprocess_for_cell_classification function
     :param classifier_evalset: the evaluation dataset, from the preprocess_for_cell_classification function (or a different function, if that is not the task you're performing)
     :param output_dir: str, the path to the directory where the model will be saved
-    :param geneformer_batch_size: int, the batch size for geneformer. Defaults to 12, which is the batch size used by the authors
+    :param geneformer_batch_size: int, the batch size for geneformer. Defaults to 12
     :param epochs: int, the number of epochs to train for. Defaults to 10, which is the number of epochs used by the authors
     :param logging_steps: int, the number of steps to log. Defaults to 10, which is the number of steps used by the authors
 
