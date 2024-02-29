@@ -7,9 +7,7 @@ Geneformer should be run on the discovery cluster, where it is already installed
     
 Use a [ServiceNow Access Request form][sponsor-form] if you need to request access to the cluster or update your sponsor
 
-Use a [ServiceNow ticket for partition access][partition-form] if you need to request access to the work/ccnr partition
-
-Finally, you should request access to the netsi (note spelling) partition, which will allow you to use the multi_gpu partition for your jobs. For this you should submit a [Service Now ticket][submit-ticket] (there are no specific form for this because the partition is only accessible to people in network science labs), making sure to say that Laszlo is your PI and that you would like access to the netsi partition. 
+You should also request access to the netsi (note spelling) partition, which will allow you to use the multiple gpus and run your jobs for as long as needed. For this you should submit a [Service Now ticket][submit-ticket] (there are no specific form for this because the partition is only accessible to people in network science labs), making sure to say that Laszlo is your PI and that you would like access to the netsi partition. You can use the same process to request access to the work/ccnr directory, which is convenient for collaborative work on the cluster.
 
 In both cases Laszlo will need to approve the request. Letting Rachael know that you're going through this process will help speed it along.
     
@@ -23,11 +21,12 @@ If you need to add packages to the environment for your application, open the en
     pip install <your package>
 
 
-For most applications, it is preferable to run Geneformer using sbatch commands. An example sbatch script is below. This is sufficient for running small numbers of samples (up to a few hundred) through Geneformer for analysis, but for more intense applications see the relevant section. The following script is also saved at LOCATION.
+For most applications, it is preferable to run Geneformer using sbatch commands. An example sbatch script is below. For running samples through Geneformer this setup should be sufficient (it can run ~150 samples per minute, not accounting for any downstream analysis your script is performing.)
 
     #!/bin/bash
     #SBATCH --nodes=1
-    #SBATCH --time=4:00:00
+    #SBATCH --time=00:20:00
+    #SBATCH --ntasks=20
     #SBATCH --job-name=your_job
     #SBATCH --mem=128G
     #SBATCH --partition=short
@@ -36,7 +35,7 @@ For most applications, it is preferable to run Geneformer using sbatch commands.
     
     module load anaconda3/2021.05
     source activate /work/ccnr/GeneFormer/conda_environment/optimus_gene
-    python your_script.py 
+    python your_script.py  
     
 ### Using Geneformer
 For basic applications of Geneformer, please see the script called `geneformer_basics.py`, which currently is stored in the folder `/work/ccnr/GeneFormer/jjs_adventures` on the discovery cluster. The script walks through useful functions for tasks such as tokenizing an expression dataset, loading the model, running samples, and some basic fine tuning operations. For some notes on these applications that won't be found as easily in the script, continue reading.
