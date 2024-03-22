@@ -188,7 +188,7 @@ def tokenize_csv(data, gene_ID_type,genes_to_include = None, dataset_normalizati
         # cut off the list at 2048, the maximum sequence length
         if len(sorted_indices)>2048:
             sorted_indices = sorted_indices[:2048]
-            sorted_tokens = sorted_indices[:2048]
+            sorted_tokens = sorted_tokens[:2048]
         # add the sorted indices to the input_ids list
         ans_dict['input_ids'].append(sorted_tokens)
         # add the length of the sorted indices to the length list
