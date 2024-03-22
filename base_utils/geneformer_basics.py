@@ -24,11 +24,12 @@ from geneformer import DataCollatorForCellClassification
 from ray import tune
 from ray.tune.search.hyperopt import HyperOptSearch
 
-###############################################################################################
+########################################################################################################
 # Contents
 # line 45: tokenize data section
 #   line 54: function to parse GEO data
 #   line 120: function to tokenize csv data
+####### Add 11 to every line reference below this (updated tokenizer, too lazy to retype legend) #######
 # line 203: load data and model section
 #   line 214: class to handle GF data and return a Dataset object
 #   line 307: function to load a model
@@ -38,7 +39,7 @@ from ray.tune.search.hyperopt import HyperOptSearch
 #   line 527: function to pre-process data for a cell classification task
 #   line 565: function to optimize hyperparameters
 #   line 645: function to fine-tune a model for a cell classification task
-###############################################################################################
+########################################################################################################
 
 ################################################################################################
 # This section of the script contains functions to tokenize expression data from GEO datasets
@@ -115,10 +116,12 @@ def parse_GEO(accession_id, data_dir, gz_name):
     metadata.to_csv(os.path.join(directory, "metadata", accession_id + "_metadata.csv"))
     return exprs, metadata
 
-def tokenize_csv(data, gene_ID_type, dataset_normalization = False, path_to_metadata = None, metadata_parser = None):
+def tokenize_csv(data, gene_ID_type,genes_to_include = None, dataset_normalization = False, path_to_metadata = None, metadata_parser = None):
     """
     :param data: pandas dataframe, the expression data from the GEO dataset. The format should be a matrix with gene names as the row index and patient IDs as the column index
     :param gene_ID_type: str, the type of gene ID used in the dataset. Should be either "ensembl" or the name of your format. Your format should be compatible with the gprofiler package 
+    :param genes_to_include: list, a list of genes to include in the dataset. If None, all genes will be included. Defaults to None
+        Note: genes to include should be in ENSEMBL format
     :param dataset_normalization: bool, whether to normalize the dataset by median gene expression WITHIN the dataset (in addition to the geneformer normalization). Defaults to False
     :param path_to_metadata: str, the path to the metadata file. Defaults to None, which is fine if no labels are needed
     :param metadata_parser: function, a function that takes the metadata dataframe and the column index as input and returns the label for the sample. Defaults to None, which is fine if no labels are needed
@@ -126,12 +129,14 @@ def tokenize_csv(data, gene_ID_type, dataset_normalization = False, path_to_meta
     :return: a HuggingFace Dataset object with the tokenized data
     """
     if path_to_metadata != None:
-        metadata = pd.read_csv(path_to_metadata)
+        metadata = pd.read_csv(path_to_metadata,low_memory = False)
     # get the tokens and the median values for normalization from the geneformer package
     tokens = geneformer.TranscriptomeTokenizer()
     token_dict = tokens.gene_token_dict
+    print(len(token_dict))
     median_dict = tokens.gene_median_dict
-    ans_dict = {'input_ids':[], 'length':[], 'label':[]}
+    print(len(median_dict))
+    ans_dict = {'input_ids':[], 'length':[], 'label':[],'gene_ids':[]}
     # save the row indices as a list of gene ids
     gene_ids = data.index.tolist()
 
@@ -140,24 +145,24 @@ def tokenize_csv(data, gene_ID_type, dataset_normalization = False, path_to_meta
         data = data.div(data.median(axis=1), axis=0)
     # if the genes are not in ensembl format, convert them to ensembl format with gprofiler
     if gene_ID_type != "ensembl":
-        new_gene_ids = []
         gp = GProfiler(return_dataframe=True)
         convert_genes = gp.convert(organism='hsapiens',
                     query=gene_ids,
                     target_namespace='ENSG')
+        convert_genes.drop_duplicates(subset = 'incoming', keep = 'first', inplace = True)
         converted_genes = convert_genes['converted'].to_list()
-
         # Gprofiler returns 'None' for genes that it cannot convert, so we will remove those genes from the dataset
-        counter = 0
-        for i in range(len(gene_ids)):
-            if converted_genes[i] != 'None':
-                new_gene_ids.append(converted_genes[i])
-            else:
-                data = data.drop(gene_ids[i])
-                counter+=1
-        print(f"Removed {counter} genes from the dataset because they could not be converted to ensembl IDs.")
+        data['for_filter'] = converted_genes
+        data = data[data['for_filter'] != 'None']
+        data.index = data['for_filter']
+        data = data.drop(columns = 'for_filter')
+        new_gene_ids = data.index.tolist()
+        print(f"Removed {len(gene_ids)-len(new_gene_ids)} genes from the dataset because they could not be converted to ensembl IDs.")
         # replace the index of the data with the new gene IDs
         data.index = new_gene_ids
+    # filter for genes to include. This is useful if you are dealing with bulk data
+    if genes_to_include != None:
+        data = data.loc[genes_to_include]
     
     # Now we perform the normalization from the geneformer package, which divides each gene's expression by its median value in the pretraining corpus
     # for each row in the data, put the index into median_dict and then divide the row by the median value
@@ -171,6 +176,8 @@ def tokenize_csv(data, gene_ID_type, dataset_normalization = False, path_to_meta
             indices_to_drop.append(data.index[i])
             counter+=1
     data = data.drop(indices_to_drop)
+    
+    final_gene_ids = data.index
     print(f"Removed {counter} genes from the dataset because they could not be found in the median dictionary.")
     print(f"Final dataset size: {len(data.index)} genes")
 
@@ -178,25 +185,31 @@ def tokenize_csv(data, gene_ID_type, dataset_normalization = False, path_to_meta
     for i in tqdm(range(len(data.columns))):
         # make a list of the indices (genes), sorted by descending order of the column (rank value)
         sorted_indices = data.iloc[:,i].sort_values(ascending = False).index.tolist()
+        if i==0:
+            print(data.iloc[:,i])
         # replace the indices with their token values
-        sorted_indices = [token_dict[i] for i in sorted_indices]
+        sorted_tokens = [token_dict[i] for i in sorted_indices]
         # cut off the list at 2048, the maximum sequence length
         if len(sorted_indices)>2048:
             sorted_indices = sorted_indices[:2048]
+            sorted_tokens = sorted_indices[:2048]
         # add the sorted indices to the input_ids list
-        ans_dict['input_ids'].append(sorted_indices)
+        ans_dict['input_ids'].append(sorted_tokens)
         # add the length of the sorted indices to the length list
         ans_dict['length'].append(len(sorted_indices))
+        # add the gene_ids
+        ans_dict['gene_ids'].append(sorted_indices)
 
         if path_to_metadata != None:
-            # your function should take teh metadata frame and the column index as input and return the label for the sample
+            # your function should take the metadata frame and the column index as input and return the label for the sample
             your_label = metadata_parser(metadata,i)
+            ans_dict['label'].append(your_label)
         else:
             ans_dict['label'].append(None)
     # Create a pyarrow tabel out of the data
     arrow_data = pa.Table.from_arrays([ans_dict[key] for key in list(ans_dict.keys())], names=list(ans_dict.keys()))
     hg_data = Dataset(arrow_data)
-    return hg_data
+    return ans_dict,hg_data
 
 ################################################################################################
 # This section of the script contains functions to load datasets and models, and to run samples through the model
