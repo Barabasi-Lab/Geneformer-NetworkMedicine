@@ -29,7 +29,7 @@ from ray.tune.search.hyperopt import HyperOptSearch
 # line 45: tokenize data section
 #   line 54: function to parse GEO data
 #   line 120: function to tokenize csv data
-####### Add 11 to every line reference below this (updated tokenizer, too lazy to retype legend) #######
+####### Add 7 to every line reference below this (updated tokenizer, too lazy to retype legend) #######
 # line 203: load data and model section
 #   line 214: class to handle GF data and return a Dataset object
 #   line 307: function to load a model
@@ -133,9 +133,7 @@ def tokenize_csv(data, gene_ID_type,genes_to_include = None, dataset_normalizati
     # get the tokens and the median values for normalization from the geneformer package
     tokens = geneformer.TranscriptomeTokenizer()
     token_dict = tokens.gene_token_dict
-    print(len(token_dict))
     median_dict = tokens.gene_median_dict
-    print(len(median_dict))
     ans_dict = {'input_ids':[], 'length':[], 'label':[],'gene_ids':[]}
     # save the row indices as a list of gene ids
     gene_ids = data.index.tolist()
@@ -185,8 +183,6 @@ def tokenize_csv(data, gene_ID_type,genes_to_include = None, dataset_normalizati
     for i in tqdm(range(len(data.columns))):
         # make a list of the indices (genes), sorted by descending order of the column (rank value)
         sorted_indices = data.iloc[:,i].sort_values(ascending = False).index.tolist()
-        if i==0:
-            print(data.iloc[:,i])
         # replace the indices with their token values
         sorted_tokens = [token_dict[i] for i in sorted_indices]
         # cut off the list at 2048, the maximum sequence length
