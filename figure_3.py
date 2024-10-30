@@ -138,5 +138,4 @@ axs[1,1].set_xlabel('Top Candidates')
 axs[1,1].set_ylabel('Cumulative True Positives')
 
 fig.tight_layout()
-import sys
-plt.savefig(f'{path_to_figs}figure_3_test_{sys.argv[1]}.png',dpi=300,bbox_inches='tight')
+plt.savefig(f'{path_to_figs}figure_3.png',dpi=300,bbox_inches='tight')
