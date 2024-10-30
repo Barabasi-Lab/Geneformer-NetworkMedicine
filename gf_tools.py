@@ -605,7 +605,7 @@ def non_degree_preserving_randomization(graph):
     return randomized
 
 
-def get_background_attns(matrix, indices_used):
+def get_background(matrix, indices_used):
     """
     Retrieve background attention values from a matrix, excluding specified indices.
 
@@ -629,7 +629,7 @@ def get_background_attns(matrix, indices_used):
     return new_ls
 
 
-def get_edge_attentions(edgelist, matrix, gene_index_dict):
+def get_edge_weights(edgelist, matrix, gene_index_dict):
     """
     Extract attention values for edges in a list based on a given matrix.
 
@@ -656,7 +656,7 @@ def get_edge_attentions(edgelist, matrix, gene_index_dict):
     return edge_attns
 
 
-def get_graph_attns(ppi_sub, pretrained_max):
+def get_graph_weights(ppi_sub, pretrained_max,gene_index_dict):
     """
     Retrieve attention values for edges in a subgraph and track the indices used.
 
@@ -685,7 +685,7 @@ def get_graph_attns(ppi_sub, pretrained_max):
     return ppi_attns, indices_used
 
 
-def degree_attns(ppi_sub, pretrained_max, gene_index_dict, gene_list=None):
+def degree_weights(ppi_sub, pretrained_max, gene_index_dict, gene_list=None):
     """
     Calculate attention values and degrees for specified nodes in a graph.
 
@@ -744,7 +744,7 @@ def bin_by_degree(total_attns, degrees):
         deg_dict[degrees[i]].append(total_attns[i])
     return deg_dict
 
-def get_some_graph_attns(matrix, ppi_sub, dis_mod_graph, gene_index_dict):
+def get_some_graph_weights(matrix, ppi_sub, dis_mod_graph, gene_index_dict):
     """
     Retrieve attention values for protein-protein interactions (PPI) in a subgraph, 
     excluding edges between disease genes.
@@ -781,7 +781,7 @@ def get_some_graph_attns(matrix, ppi_sub, dis_mod_graph, gene_index_dict):
 
 def dis_mod(matrix, dis_mod_graph, gene_index_dict):
     """
-    Retrieve attention values for edges within a fully connected disease module.
+    Retrieve attention values for edges within a disease module.
 
     Parameters
     ----------
@@ -866,7 +866,7 @@ def rwr(network, seed_set, restart):
     # The rwr is performed with the algorithm pagerank from google. It iterates over the adjacency matrix
     # to calculate the steady state probability of being located at each node. I can give you literature
     # on how this works if you are interested.
-    pagerank_scores = nx.pagerank(network, personalization=personalization, alpha=1-restart)
+    pagerank_scores = nx.pagerank(network, personalization=personalization, alpha=1-restart,max_iter=500,tol=1e-8)
 
 
     # The result of pagerank is a dictionary where keys are the nodes and values are the probabilities in
@@ -923,48 +923,151 @@ def weight_network(weights, graph, gene_index_dict, directory):
     return G, missing_weights
 
 
-def get_disease_lcc(disease, ppi_sub):
+def get_disease_lcc(ppi_sub, disease_genes):
     """
     Retrieve the largest connected component (LCC) of disease-associated genes in a subgraph.
 
     Parameters
     ----------
-    disease : str
-        Name of the disease to filter genes associated with it.
     ppi_sub : nx.Graph
         Subgraph of a protein-protein interaction (PPI) network.
+    disease_genes : list
+        genes (pulled from a GDA table) associated with the disease of interest
 
     Returns
     -------
     disease_sub : nx.Graph
         Subgraph containing only the largest connected component of disease genes.
     """
-    disease_genes = list(gda[gda['NewName'].str.contains(disease)]['HGNC_Symbol'])
-    disease_genes_filtered = [symbol_to_ensembl[gene] for gene in disease_genes if gene in symbol_to_ensembl.keys()]
-    disease_subgraph = nx.subgraph(ppi_sub, disease_genes_filtered)
+    disease_subgraph = nx.subgraph(ppi_sub, disease_genes)
     largest_cc = max(nx.connected_components(disease_subgraph), key=len)
     disease_sub = disease_subgraph.copy()
     disease_sub = disease_sub.subgraph(largest_cc)
     return disease_sub
 
 
-def get_disease_subgraph(disease, ppi_sub):
+def get_disease_subgraph(ppi_sub, disease_genes):
     """
     Retrieve a subgraph of disease-associated genes in a PPI network.
 
     Parameters
     ----------
-    disease : str
-        Name of the disease to filter genes associated with it.
     ppi_sub : nx.Graph
         Subgraph of a protein-protein interaction (PPI) network.
+    disease_genes : list
+        genes (pulled from a GDA table) associated with the disease of interest
 
     Returns
     -------
     disease_subgraph : nx.Graph
         Subgraph containing all nodes associated with the disease.
     """
-    disease_genes = list(gda[gda['NewName'].str.contains(disease)]['HGNC_Symbol'])
-    disease_genes_filtered = [symbol_to_ensembl[gene] for gene in disease_genes if gene in symbol_to_ensembl.keys()]
-    disease_subgraph = nx.subgraph(ppi_sub, disease_genes_filtered)
+    disease_subgraph = nx.subgraph(ppi_sub, disease_genes)
     return disease_subgraph
+    
+def prune_ppi_nodes(ppi, gene_index_dict):
+    """
+    Prune nodes from a protein-protein interaction (PPI) network, retaining only those present in a gene dictionary.
+
+    Parameters
+    ----------
+    ppi : nx.Graph
+        NetworkX graph representing the protein-protein interaction network.
+    gene_index_dict : dict
+        Dictionary of genes, where keys are gene identifiers present in the dataset.
+
+    Returns
+    -------
+    ppi_sub : nx.Graph
+        Subgraph of the original PPI network containing only nodes that exist in the gene dictionary.
+    """
+    nodes_in_data = set(gene_index_dict.keys())
+    pruned_nodes = [node for node in ppi.nodes() if node in nodes_in_data]
+    ppi_sub = ppi.subgraph(pruned_nodes)
+    return ppi_sub
+    
+def get_counter(result_df):
+    """
+    Generate a cumulative count of genes that have been found in a ranked gene list.
+
+    Parameters
+    ----------
+    result_df : pd.DataFrame
+        DataFrame containing a column 'Node' with ranked genes.
+
+    Returns
+    -------
+    counter : list of int
+        List representing the cumulative count of tossed genes at each position in the ranked list.
+        The first element is initialized to 0, and each subsequent element increases by 1 if the gene
+        is in `tossed_genes`, otherwise it remains the same.
+    """
+    ranked_genes = result_df['Node']
+    counter = [0]
+    for gene in ranked_genes:
+        if gene in tossed_genes:
+            counter.append(counter[-1] + 1)
+        else:
+            counter.append(counter[-1])
+    return counter
+    
+def auc_plot(means):
+    """
+    Calculate the true positive rate (TPR) and false positive rate (FPR) based on a list of mean values for an AUC plot.
+
+    Parameters
+    ----------
+    means : list of float
+        List of mean values representing cumulative counts or similar statistics.
+
+    Returns
+    -------
+    fpr : list of float
+        False positive rate values at each position in the list.
+    tpr : list of float
+        True positive rate values at each position in the list.
+    """
+    tpr = [means[i] / means[-1] for i in range(len(means))]
+    fpr = [(i - means[i]) / ((i - means[i]) + ((len(means) - i) - (means[-1] - means[i]))) for i in range(len(means))]
+    return fpr, tpr
+
+
+def prc_plot(means):
+    """
+    Calculate the precision and recall based on a list of mean values for a PRC plot.
+
+    Parameters
+    ----------
+    means : list of float
+        List of mean values representing cumulative counts or similar statistics.
+
+    Returns
+    -------
+    recall : np.ndarray
+        Recall values at each position in the list.
+    precision : list of float
+        Precision values at each position in the list.
+    """
+    precision = [means[i] / (i + 1) for i in range(len(means))]
+    recall = np.array([means[i] / means[-1] for i in range(len(means))])
+    return recall, precision
+
+
+def auc(x, y):
+    """
+    Compute the area under the curve (AUC) for given x and y values using the trapezoidal rule.
+
+    Parameters
+    ----------
+    x : list or np.ndarray
+        x-coordinates of the points.
+    y : list or np.ndarray
+        y-coordinates of the points.
+
+    Returns
+    -------
+    auc_value : float
+        The calculated area under the curve (AUC) based on x and y values.
+    """
+    return np.trapz(y, x)
+
