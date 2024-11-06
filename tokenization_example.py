@@ -10,8 +10,13 @@ matrix_output_path = '/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts
 exprs = pd.read_csv(path_to_exprs)
 exprs_T = exprs.transpose()
 tokenized = gf.tokenize_csv(exprs_T, 'ensembl')
+
+#### METADATA ####
+
 # add a label column. This step will differ based on the type and format of your metadata
 tokenized['label']=exprs.RA.tolist()
+
+##################
 
 # Create a pyarrow tabel out of the data
 arrow_data = pa.Table.from_arrays([tokenized[key] for key in list(tokenized.keys())], names=list(tokenized.keys()))
