@@ -21,7 +21,7 @@ with open("./supplemental_data/gene_name_id_dict.pkl", 'rb') as f:
 disease_genes = list(gda[gda['NewName'].str.contains("cardiomyopathy dilated")]['HGNC_Symbol'])
 disease_genes_filtered = [symbol_to_ensembl[gene] for gene in disease_genes if gene in symbol_to_ensembl.keys()]
 
-base_path = "./aggregated_matrices/"
+base_path = "./data/aggregated_matrices/"
 mat_paths = ["aggregated_attentions/dcm_samples/fine_tuned/max/layer_4/","aggregated_attentions/dcm_samples/pretrained/max/",
 "aggregated_embeddings/dcm_samples/fine_tuned/max/layer_4/","aggregated_embeddings/dcm_samples/pretrained/max/"]
 labels = ["fine-tuned attentions","pretrained attentions", "fine-tuned embeddings", "pretrained embeddings"]
