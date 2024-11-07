@@ -1,5 +1,5 @@
 # Transformers Enhance the Predictive Power of Network Medicine
-*Jonah Spector, Andrés Aldana Gonzalez, Michael Sebek, Joseph Ehlert, Christian DeFrondeville, and Albert-László Barabási*
+*Jonah Spector, Andrés Aldana Gonzalez, Michael Sebek, Joseph Ehlert, Christian DeFrondeville, Susan Dina Ghiassian, and Albert-László Barabási*
 ## Code and Data Structure
 All functions used for analysis are contained in ```gf_tools.py```. The scripts ```figure_X.py``` can be run to generate the figures in the main text, and the scripts ```figure_SX.py``` can be run to generate the supplemental figures. The ```tokenization_example.py``` file shows how to use other expression data with Geneformer. 
 
