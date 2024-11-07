@@ -11,16 +11,16 @@ import netmedpy
 import gf_tools as gf
 import sys
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
+path_to_figs = "path to figure output folder"
 
-drugbank = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/drug_repurposing/all_drugbank_drugs.csv')
-
-PPI = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/ppi_with_gf_tokens.csv')
+PPI = pd.read_csv('./supplemental_data/ppi.csv')
 ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
-with open("/work/ccnr/GeneFormer/conda_environment/geneformer/gene_name_id_dict.pkl", 'rb') as f:
-    symbol_to_ensembl = pickle.load(f)
 
-gda = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/GDA_Filtered_04042022.csv')
+gda = pd.read_csv('./supplemental_data/gda.csv')
+
+with open("./supplemental_data/gene_name_id_dict.pkl", 'rb') as f:
+    symbol_to_ensembl = pickle.load(f)
+    
 disease_genes = list(gda[gda['NewName'].str.contains("cardiomyopathy dilated")]['HGNC_Symbol'])
 disease_genes_filtered = [symbol_to_ensembl[gene] for gene in disease_genes if gene in symbol_to_ensembl.keys()]
 
@@ -29,7 +29,7 @@ val_dict = {}
 gene_dicts = {}
 path_dict = {}
 for i in range(6):
-    fpath = f'/work/ccnr/GeneFormer/aggregated_matrices/aggregated_attentions/cardiomyopathy_failing/dilated/fine_tuned/max/layer_{i}/'
+    fpath = f'./data/aggregated_attentions/dcm_samples/fine_tuned/max/layer_{i}/'
     k = f'attentions layer {i}'
     path_dict[k] = fpath
     counts = gf.load(fpath+'counts.pkl')
@@ -41,7 +41,7 @@ for i in range(6):
     gene_dicts[k] = gf.load(fpath+'gene_dict.pkl')
 
 for i in range(6):
-    fpath = f'/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/cardiomyopathy_failing/dilated/fine_tuned/max/layer_{i}/'
+    fpath = f'./data/aggregated_matrices/aggregated_embeddings/dcm_samples/fine_tuned/max/layer_{i}/'
     k = f'embeddings layer {i}'
     path_dict[k] = fpath
     counts = gf.load(fpath+'counts.pkl')
@@ -52,7 +52,7 @@ for i in range(6):
     val_dict[k] = vals
     gene_dicts[k] = gf.load(fpath+'gene_dict.pkl')
 
-fpath = f'/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/cardiomyopathy_failing/dilated/fine_tuned/max/layer_input/'
+fpath = f'./data/aggregated_matrices/aggregated_embeddings/dcm_samples/fine_tuned/max/layer_input/'
 k = 'input embeddings'
 path_dict[k] = fpath
 counts = gf.load(fpath+'counts.pkl')
