@@ -3,9 +3,9 @@ import pandas as pd
 import datasets
 import pyarrow as pa
 
-path_to_exprs = '/work/ccnr/GeneFormer/Training_Datasets/GSE97810.csv'
-tokenized_output_path = '/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/test_tokenization/'
-matrix_output_path = '/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/test_tokenization/'
+path_to_exprs = './datasets/GSE97810.csv'
+tokenized_output_path = 'path to save tokenized data'
+matrix_output_path = 'path to save aggregated weights'
 
 exprs = pd.read_csv(path_to_exprs)
 exprs_T = exprs.transpose()
