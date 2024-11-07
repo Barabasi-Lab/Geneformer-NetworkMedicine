@@ -10,23 +10,23 @@ import gf_tools as gf
 
 sns.set(style="whitegrid",context="talk")
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
+path_to_figs = "path to figure output folder"
+
+PPI = pd.read_csv('./supplemental_data/ppi.csv')
+ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
+
+gda = pd.read_csv('./supplemental_data/gda.csv')
+
+with open("./supplemental_data/gene_name_id_dict.pkl", 'rb') as f:
+    symbol_to_ensembl = pickle.load(f)
 
 # paths to genecorpus weight matrices
 embed_path = "/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/genecorpus/pretrained/max/"
 attn_path = "/work/ccnr/GeneFormer/aggregated_matrices/aggregated_attentions/genecorpus/pretrained/max/"
 
 # paths to dcm weight matrices
-embed_path_dcm = "/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/cardiomyopathy_failing/dilated/pretrained/max/"
-attn_path_dcm = "/work/ccnr/GeneFormer/aggregated_matrices/aggregated_attentions/cardiomyopathy_failing/dilated/pretrained/max/"
-
-PPI = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/ppi_with_gf_tokens.csv')
-ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
-
-gda = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/GDA_Filtered_04042022.csv')
-
-with open("/work/ccnr/GeneFormer/conda_environment/geneformer/gene_name_id_dict.pkl", 'rb') as f:
-    symbol_to_ensembl = pickle.load(f)
+embed_path_dcm = "./data/aggregated_matrices/aggregated_embeddings/dcm_samples/pretrained/max/"
+attn_path_dcm = "./data/aggregated_matrices/aggregated_attentions/dcm_samples/pretrained/max/"
 
 embed_counts = gf.load(embed_path+"counts.pkl")
 embed_vals = gf.load(embed_path+"vals.pkl")
