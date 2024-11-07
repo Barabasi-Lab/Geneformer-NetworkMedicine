@@ -7,11 +7,11 @@ import seaborn as sns
 
 sns.set(style="whitegrid",context="talk")
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
+path_to_figs = "path to figure output folder"
 
-nonfail_path = '/work/ccnr/GeneFormer/datasets/cardiomyopathy_nonfailing.dataset/'
-gc_path = '/work/ccnr/GeneFormer/Genecorpus-30M/genecorpus_30M_2048.dataset/'
-dcm_path = '/work/ccnr/GeneFormer/datasets/cardiomyopathy_failing_subsets/dcm_samples.dataset/'
+nonfail_path = './data/datasets/cardiomyopathy_nonfailing.dataset/'
+gc_path = './data/datasets/genecorpus_30M_2048.dataset/'
+dcm_path = './data/datasets/cardiomyopathy_failing_subsets/dcm_samples.dataset/'
 
 path_dict = {'DCM':dcm_path,'nonfailing':nonfail_path,'genecorpus':gc_path}
 
