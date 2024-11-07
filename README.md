@@ -10,7 +10,7 @@ The ```supplemental_data``` folder contains 4 other files that are needed to gen
 ## How to Install and Run 
 The requirements.txt file lists required packages for this project. To avoid compatibility issues, we recommend creating a new virtual environment and installing only the required packages.
 
-The easiest way to set up the data locally is to download this repository, and add a folder called ```aggregated_matrices``` that contains the data from [dropbox](https://www.dropbox.com/home/Biology/01_Active_Collaborations/Geneformer/data), using the same file structure. It may be necessary to only take some of the branches of the tree, depending on the availability of storage. If this is the case, and you would like to implement a different file structure, the paths to the matrices can be found at or near the top of each figure script. 
+The easiest way to set up the data locally is to download this repository, and add a folder called ```data``` that contains the data from [dropbox](https://www.dropbox.com/home/Biology/01_Active_Collaborations/Geneformer/data), using the same file structure. It may be necessary to only take some of the branches of the tree, depending on the availability of storage. If this is the case, and you would like to implement a different file structure, the paths to the matrices can be found at or near the top of each figure script. 
 
 ### Running the Figure Scripts
 Once the paths to the matrices have been specified, open the figure script you would like to run, and specify your output folder in the ```path_to_figs``` variable. Then the script can be run and the plots will be saved to that folder.
