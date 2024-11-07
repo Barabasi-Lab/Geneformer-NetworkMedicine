@@ -11,18 +11,20 @@ import gf_tools as gf
 import operator
 import sys
 
+# paths to weight matrices are on line 87 for panels a and b, 198 for c and d, and 343 for e and f
+
 sns.set(style='whitegrid',context='talk',font_scale=0.75)
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
+path_to_figs = "path to figure output folder"
 
-drugbank = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/drug_repurposing/all_drugbank_drugs.csv')
-
-PPI = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/ppi_with_gf_tokens.csv')
+PPI = pd.read_csv('./supplemental_data/ppi.csv')
 ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
-with open("/work/ccnr/GeneFormer/conda_environment/geneformer/gene_name_id_dict.pkl", 'rb') as f:
-    symbol_to_ensembl = pickle.load(f)
 
-gda = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/GDA_Filtered_04042022.csv')
+gda = pd.read_csv('./supplemental_data/gda.csv')
+
+with open("./supplemental_data/gene_name_id_dict.pkl", 'rb') as f:
+    symbol_to_ensembl = pickle.load(f)
+    
 disease_genes = list(gda[gda['NewName'].str.contains("cardiomyopathy dilated")]['HGNC_Symbol'])
 disease_genes_filtered = [symbol_to_ensembl[gene] for gene in disease_genes if gene in symbol_to_ensembl.keys()]
 
@@ -82,8 +84,8 @@ def combined_counts(rankings1, rankings2,p=4):
 
 ####################################################################################################################
 
-attn_path = '/work/ccnr/GeneFormer/aggregated_matrices/aggregated_attentions/genecorpus/pretrained/max/'
-embed_path = '/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/genecorpus/pretrained/max/'
+attn_path = './data/aggregated_matrices/aggregated_attentions/genecorpus/pretrained/max/'
+embed_path = './data/aggregated_matrices/aggregated_embeddings/genecorpus/pretrained/max/'
 
 attn_counts = gf.load(attn_path+'counts.pkl')
 attn_vals = gf.load(attn_path+'vals.pkl')
@@ -193,8 +195,8 @@ plt.savefig(path_to_figs+'figure_S3_panel_b.svg')
 
 #### Combined rankings for disease module detection (panels a and b) ####
 
-base_path = "/work/ccnr/GeneFormer/aggregated_matrices/"
-mat_paths = ["aggregated_attentions/cardiomyopathy_failing/dilated/fine_tuned/max/layer_4/", "aggregated_embeddings/cardiomyopathy_failing/dilated/fine_tuned/max/layer_4/"]
+base_path = "./data/aggregated_matrices/"
+mat_paths = ["aggregated_attentions/dcm_samples/fine_tuned/max/layer_4/", "aggregated_embeddings/dcm_samples/fine_tuned/max/layer_4/"]
 labels = ["fine-tuned attentions", "fine-tuned embeddings"]
 
 count_dict = {}
@@ -338,8 +340,8 @@ plt.savefig(path_to_figs+'figure_S3_panels_cd.png',dpi=300,bbox_inches='tight')
 
 ##### Make panels c and d (drug repurposing) #####
 # reload matrices (because the weigths that perform well for drug repurposing are not necessarily the same as for disease module detection)
-base_path = "/work/ccnr/GeneFormer/aggregated_matrices/"
-mat_paths = ["aggregated_attentions/cardiomyopathy_failing/dilated/fine_tuned/max/layer_5/", "aggregated_embeddings/cardiomyopathy_failing/dilated/fine_tuned/max/layer_0/"]
+base_path = "./data/aggregated_matrices/"
+mat_paths = ["aggregated_attentions/dcm_samples/fine_tuned/max/layer_5/", "aggregated_embeddings/dcm_samples/fine_tuned/max/layer_0/"]
 labels = ["layer 5 attentions", "layer 0 embeddings"]
 
 count_dict = {}
