@@ -14,12 +14,12 @@ sns.set(style="whitegrid",context="talk")
 path_to_figs = "path to figure output folder"
 
 # paths to genecorpus weight matrices
-embed_path = "./aggregated_matrices/aggregated_embeddings/genecorpus/pretrained/max/"
-attn_path = "./aggregated_matrices/aggregated_attentions/genecorpus/pretrained/max/"
+embed_path = "./data/aggregated_matrices/aggregated_embeddings/genecorpus/pretrained/max/"
+attn_path = "./data/aggregated_matrices/aggregated_attentions/genecorpus/pretrained/max/"
 
 # paths to dcm weight matrices
-embed_path_dcm = "./aggregated_matrices/aggregated_embeddings/dcm_samples/pretrained/max/"
-attn_path_dcm = "./aggregated_matrices/aggregated_attentions/dcm_samples/pretrained/max/"
+embed_path_dcm = "./data/aggregated_matrices/aggregated_embeddings/dcm_samples/pretrained/max/"
+attn_path_dcm = "./data/aggregated_matrices/aggregated_attentions/dcm_samples/pretrained/max/"
 
 PPI = pd.read_csv('./supplemental_data/ppi.csv')
 ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
