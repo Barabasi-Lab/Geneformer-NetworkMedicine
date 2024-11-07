@@ -3,7 +3,7 @@ import pandas as pd
 import datasets
 import pyarrow as pa
 
-path_to_exprs = './datasets/GSE97810.csv'
+path_to_exprs = 'path to your expression data'
 tokenized_output_path = 'path to save tokenized data'
 matrix_output_path = 'path to save aggregated weights'
 
@@ -14,7 +14,6 @@ tokenized = gf.tokenize_csv(exprs_T, 'ensembl')
 #### METADATA ####
 
 # add a label column. This step will differ based on the type and format of your metadata
-tokenized['label']=exprs.RA.tolist()
 
 ##################
 
