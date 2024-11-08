@@ -171,20 +171,10 @@ for i,col in enumerate(down_cols):
     temp = rankings.sort_values(by=col,ascending=False)
     counter = np.cumsum(np.array(list(temp["pos_or_neg"])))
     counter_dict[down_labels[i]] = counter
-
-def auc(means):
-    tpr = [means[i]/means[-1] for i in range(len(means))]
-    fpr = [(i-means[i])/((i-means[i])+((len(means)-i)-(means[-1]-means[i]))) for i in range(len(means))]
-    return np.trapz(tpr,fpr)
-
-def auc_plot(means):
-    tpr = [means[i]/means[-1] for i in range(len(means))]
-    fpr = [(i-means[i])/((i-means[i])+((len(means)-i)-(means[-1]-means[i]))) for i in range(len(means))]
-    return fpr,tpr
     
 for k,v in counter_dict.items():
-    fpr,tpr = auc_plot(v)
-    plt.plot(fpr[::100],tpr[::100],label=f'{k}, AUROC = {round(auc(v),2)}')
+    fpr,tpr = gf.auc_plot(v)
+    plt.plot(fpr[::100],tpr[::100],label=f'{k}, AUROC = {round(gf.auc(v),2)}')
 
 plt.xlabel("False Positive Rate")
 plt.ylabel("True Positive Rate")
