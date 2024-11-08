@@ -469,7 +469,7 @@ for k in list(ppis_dict.keys()):
     score_df = score_df.sort_values(by="Score",ascending=True)
     all_scores[k] = score_df
 
-combined = combined_counts(all_scores[list(ppis_dict.keys())[0]],all_scores[list(ppis_dict.keys())[0]])
+combined = combined_counts(all_scores[list(ppis_dict.keys())[0]],all_scores[list(ppis_dict.keys())[1]])
 
 ascend_columns = ["attn_rank","embed_rank","average_rank"]
 descend_columns = ["borda_rank", "dowdall_rank","crank"]
