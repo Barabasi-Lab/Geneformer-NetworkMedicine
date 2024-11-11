@@ -7,8 +7,8 @@ This script generates the plots presented in Figure 5 of the paper 'Transformers
    - First, execute the data preparation script `drug_repurposing.py` to generate the necessary data for plotting.
    - Run the following commands:
      ```bash
-     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/drug_repurposing_scripts/
-     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/drug_repurposing_scripts/
+     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/drug_repurposing_scripts/
+     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/drug_repurposing_scripts/
      python3 drug_repurposing.py
      ```
    - **Note:** This script may take some time to complete, so please be patient.
@@ -16,8 +16,8 @@ This script generates the plots presented in Figure 5 of the paper 'Transformers
 2. **Generate Plots:**
    - Once the data preparation is complete, execute this plotting script by running:
      ```bash
-     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/
-     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/
+     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/
+     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/
      python3 figure_5.py
      ```
 
@@ -120,20 +120,20 @@ def score_correlation(df, file):
 if __name__=='__main__':
 
     #The basic three
-    metrics_unweighted = "data/drug_repurposing/output/unweighted/metrics.pkl"
+    metrics_unweighted = "../data/drug_repurposing/output/unweighted/metrics.pkl"
     with open(metrics_unweighted, 'rb') as file:
         metrics_unweighted = pickle.load(file)
     s_un = metrics_unweighted['Drug Scores']
     s_un['Score'] = -1*s_un['Score']
 
 
-    path = "data/drug_repurposing/output/attweights/avg/l5/metrics.pkl"
+    path = "../data/drug_repurposing/output/attweights/avg/l5/metrics.pkl"
     with open(path, 'rb') as file:
         metrics_atw = pickle.load(file)
     s_at=metrics_atw['Drug Scores']
     s_at['Score']=-1*s_at['Score']
 
-    path = "data/drug_repurposing/output/embeddings/l0/metrics.pkl"
+    path = "../data/drug_repurposing/output/embeddings/l0/metrics.pkl"
 
     with open(path, 'rb') as file:
         metrics_cs = pickle.load(file)
@@ -170,12 +170,12 @@ if __name__=='__main__':
     colors = ['black','firebrick','salmon','dodgerblue','slateblue','violet']
     labels = ['Control','AW L5','CS L0','Borda','Dawdall','CRank']
 
-    plot_ml_group(metrics, colors, labels, "plots/figure_5/combined_scores_")
+    plot_ml_group(metrics, colors, labels, "../plots/figure_5/combined_scores_")
 
     # Score correlation
     merged_df = pd.merge(s_at,
                          s_cs,
                          on='Name',
                          suffixes=('_at', '_cs'))
-    score_correlation(merged_df,"plots/figure_5/correlation.pdf")
+    score_correlation(merged_df,"../plots/figure_5/correlation.pdf")
 

@@ -50,13 +50,13 @@ def drug_repo_screen(ppi_gf,save_path,weighted=True):
 
     ###################LOADING TOYS#####################
     #####Load Drug Targets
-    drugbank = "../data/drug_repurposing/input/DB_Drug_Targets_2023.csv"
+    drugbank = "../../data/drug_repurposing/input/DB_Drug_Targets_2023.csv"
     drugbank = pd.read_csv(drugbank)
     drugbank = refine_drugbank(drugbank)
 
 
     #########Load Disease Genes
-    gda = "../data/drug_repurposing/input/disgenet_filtered.xlsx"
+    gda = "../../data/drug_repurposing/input/disgenet_filtered.xlsx"
     gda = pd.read_excel(gda)
     gda = gda.query("`Disease gene score`>=0.3")
 
@@ -133,15 +133,15 @@ def drug_repo_screen(ppi_gf,save_path,weighted=True):
 if __name__=='__main__':
 
     # Control PPI
-    ppi_control = "../data/drug_repurposing/input/PPI_2023-05-10.csv"
-    out_control = "../data/drug_repurposing/output/unweighted/"
+    ppi_control = "../../data/drug_repurposing/input/PPI_2023-05-10.csv"
+    out_control = "../../data/drug_repurposing/output/unweighted/"
 
     drug_repo_screen(ppi_control,out_control,weighted=False)
 
     # Att weights
     for i in range(6):
-        ppi = f"../data/drug_repurposing/input/ppis/ppi_att_cardiomyopathy_cardio_failing_l{i}_avg_10000.csv"
-        out_dir = f"../data/drug_repurposing/output/attweights/avg/l{i}/"
+        ppi = f"../../data/drug_repurposing/input/ppis/ppi_att_cardiomyopathy_cardio_failing_l{i}_avg_10000.csv"
+        out_dir = f"../../data/drug_repurposing/output/attweights/avg/l{i}/"
         
         drug_repo_screen(ppi,out_dir,weighted=True)
         sleep(5)
@@ -150,8 +150,8 @@ if __name__=='__main__':
     layers = ["input"]
     layers = layers + list(range(6))
     for i in layers:
-        ppi = f"../data/drug_repurposing/input/ppis/ppi_cs_cardiomyopathy_cardio_failing_l{i}_10000.csv"
-        out_dir = f"../data/drug_repurposing/output/embeddings/l{i}/"
+        ppi = f"../../data/drug_repurposing/input/ppis/ppi_cs_cardiomyopathy_cardio_failing_l{i}_10000.csv"
+        out_dir = f"../../data/drug_repurposing/output/embeddings/l{i}/"
         
         drug_repo_screen(ppi,out_dir,weighted=True)
         sleep(5)

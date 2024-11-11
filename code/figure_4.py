@@ -7,8 +7,8 @@ This script generates the plots presented in Figure 4 of the paper 'Transformers
    - First, execute the data preparation script `drug_repurposing.py` to generate the necessary data for plotting.
    - Run the following commands:
      ```bash
-     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/drug_repurposing_scripts/
-     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/drug_repurposing_scripts/
+     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/drug_repurposing_scripts/
+     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/drug_repurposing_scripts/
      python3 drug_repurposing.py
      ```
    - **Note:** This script may take some time to complete, so please be patient.
@@ -16,8 +16,8 @@ This script generates the plots presented in Figure 4 of the paper 'Transformers
 2. **Generate Plots:**
    - Once the data preparation is complete, execute this plotting script by running:
      ```bash
-     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/
-     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/
+     cd YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/
+     export PYTHONPATH=YOUR_PATH_TO_GENEFORMER-NETWORKMEDICINE/code/
      python3 figure_4.py
      ```
 
@@ -135,7 +135,7 @@ if __name__=='__main__':
     
 
     ## All layers attention weights
-    metrics_unweighted = "data/drug_repurposing/output/unweighted/metrics.pkl"
+    metrics_unweighted = "../data/drug_repurposing/output/unweighted/metrics.pkl"
     with open(metrics_unweighted, 'rb') as file:
         metrics_unweighted = pickle.load(file)
 
@@ -146,7 +146,7 @@ if __name__=='__main__':
     size = 6
 
     for i in range(size):
-        path = f"data/drug_repurposing/output/attweights/avg/l{i}/metrics.pkl"
+        path = f"../data/drug_repurposing/output/attweights/avg/l{i}/metrics.pkl"
 
         with open(path, 'rb') as file:
             m = pickle.load(file)
@@ -158,7 +158,7 @@ if __name__=='__main__':
     colors = colors + ['#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd', '#8c564b', '#d62728']
     widths = [2,1,1,1,1,1,2]
 
-    plot_ml_group(metrics_at, colors, labels, widths, "plots/figure_4/att_weights_", xlims = (0,1.1))
+    plot_ml_group(metrics_at, colors, labels, widths, "../plots/figure_4/att_weights_", xlims = (0,1.1))
 
 
 
@@ -171,7 +171,7 @@ if __name__=='__main__':
     layers = ["input"] + layers
 
     for layer in layers:
-        path = f"data/drug_repurposing/output/embeddings/l{layer}/metrics.pkl"
+        path = f"../data/drug_repurposing/output/embeddings/l{layer}/metrics.pkl"
 
         with open(path, 'rb') as file:
             m = pickle.load(file)
@@ -189,7 +189,7 @@ if __name__=='__main__':
     widths = [2,1,2,1,1,1,1,1]
 
 
-    plot_ml_group(metrics_cs, colors, labels,widths, "plots/figure_4/cosine_sim_",xlims=(0,1.1))
+    plot_ml_group(metrics_cs, colors, labels,widths, "../plots/figure_4/cosine_sim_",xlims=(0,1.1))
 
     #Summary plots
     metrics_at = metrics_at[1:]
@@ -206,7 +206,7 @@ if __name__=='__main__':
                  control_data,
                  (0.5,0.8),
                  ylabel = "AUROC",
-                 outFile="plots/figure_4/summary_roc.pdf")
+                 outFile="../plots/figure_4/summary_roc.pdf")
 
 
     # Precision Summary
@@ -228,7 +228,7 @@ if __name__=='__main__':
                  control_data,
                  (0.3,0.6),
                  ylabel="AUPC",
-                 outFile="plots/figure_4/summary_prec.pdf")
+                 outFile="../plots/figure_4/summary_prec.pdf")
 
 
     # Recall Summary
@@ -250,4 +250,4 @@ if __name__=='__main__':
                  control_data,
                  (0.3,0.6),
                  ylabel="AURC",
-                 outFile="plots/figure_4/summary_rec.pdf")
+                 outFile="../plots/figure_4/summary_rec.pdf")
