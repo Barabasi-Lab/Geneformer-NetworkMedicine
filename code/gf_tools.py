@@ -41,6 +41,95 @@ def glimpse(obj, sample_size=5):
         print(f"Sample: {obj.head(sample_size)}")
     else:
         print(f"Representation: {repr(obj)}")
+        
+def tokenize_csv(data, gene_ID_type,genes_to_include = None, dataset_normalization = False):
+    """
+    Function to tokenize expression data for Geneformer
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        the expression data, formatted so that the index is the gene names and the columns are samples. For best results, convert the gene names to ensembl beforehand
+    gene_ID_type : str
+        the type of gene ID used in the dataset. Should be either "ensembl" or the name of your format. Your format should be compatible with the gprofiler package, which will try to convert the names back to ensembl
+    genes_to_include : list 
+        a list of genes to include in the dataset. If None, all genes will be included. Defaults to None
+        Note: genes to include should be in Ensembl format
+    dataset_normalization : bool 
+        If True, dataset will be normalized by median gene expression WITHIN the dataset (in addition to the geneformer normalization). Defaults to False
+
+    Returns
+    -------
+    ans_dict : dict
+        a dictionary that can be saved as a huggingface dataset
+    """
+    # get the tokens and the median values for normalization from the geneformer package
+    tokens = geneformer.TranscriptomeTokenizer()
+    token_dict = tokens.gene_token_dict
+    median_dict = tokens.gene_median_dict
+    ans_dict = {'sample_id':[],'input_ids':[], 'length':[]} # if you have labels to include, add them in the same format here (i.e. 'class':[],'sample_date':[])
+    # save the row indices as a list of gene ids
+    gene_ids = data.index.tolist()
+
+    if dataset_normalization == True: 
+        # for each row in the data, divide the row by its median value
+        data = data.div(data.median(axis=1), axis=0)
+    # if the genes are not in ensembl format, convert them to ensembl format with gprofiler
+    if gene_ID_type != "ensembl":
+        new_gene_ids = []
+        gp = GProfiler(return_dataframe=True)
+        convert_genes = gp.convert(organism='hsapiens',
+                    query=gene_ids,
+                    target_namespace='ENSG')
+        converted_genes = convert_genes['converted'].to_list()
+
+        # Gprofiler returns 'None' for genes that it cannot convert, so we will remove those genes from the dataset
+        counter = 0
+        for i in range(len(gene_ids)):
+            if converted_genes[i] != 'None':
+                new_gene_ids.append(converted_genes[i])
+            else:
+                data = data.drop(gene_ids[i])
+                counter+=1
+        print(f"Removed {counter} genes from the dataset because they could not be converted to ensembl IDs.")
+        # replace the index of the data with the new gene IDs
+        data.index = new_gene_ids
+    # filter for genes to include. This is useful if you are dealing with bulk data
+    if genes_to_include != None:
+        data = data.loc[genes_to_include]
+    
+    # Now we perform the normalization from the geneformer package, which divides each gene's expression by its median value in the pretraining corpus
+    # for each row in the data, put the index into median_dict and then divide the row by the median value
+    indices_to_drop = []
+    counter = 0
+    for i in tqdm(range(len(data.index))):
+        try:
+            median = median_dict[data.index[i]]
+            data.iloc[i] = data.iloc[i] / median
+        except KeyError:
+            indices_to_drop.append(data.index[i])
+            counter+=1
+    data = data.drop(indices_to_drop)
+    print(f"Removed {counter} genes from the dataset because they could not be found in the median dictionary.")
+    print(f"Final dataset size: {len(data.index)} genes")
+    
+    cols = list(data.columns)
+    # Create the rank value encoding for each sample
+    for i in tqdm(range(len(data.columns))):
+        # make a list of the indices (genes), sorted by descending order of the column (rank value)
+        sorted_indices = data.iloc[:,i].sort_values(ascending = False).index.tolist()
+        # replace the indices with their token values
+        sorted_indices = [token_dict[i] for i in sorted_indices]
+        # cut off the list at 2048, the maximum sequence length
+        if len(sorted_indices)>2048:
+            sorted_indices = sorted_indices[:2048]
+        # add the sorted indices to the input_ids list
+        ans_dict['input_ids'].append(sorted_indices)
+        # add the length of the sorted indices to the length list
+        ans_dict['length'].append(len(sorted_indices))
+        ans_dict['sample_id'].append(cols[i])
+    
+    return ans_dict
 
 class GFDataset(Dataset):
 

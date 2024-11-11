@@ -9,21 +9,21 @@ import pickle
 
 sns.set(style="whitegrid",context="talk")
 
-PPI = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/ppi_with_gf_tokens.csv')
+path_to_figs = "path to figure output folder"
+
+PPI = pd.read_csv('./supplemental_data/ppi.csv')
 ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
 
-gda = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/GDA_Filtered_04042022.csv')
+gda = pd.read_csv('./supplemental_data/gda.csv')
 
-with open("/work/ccnr/GeneFormer/conda_environment/geneformer/gene_name_id_dict.pkl", 'rb') as f:
+with open("./supplemental_data/gene_name_id_dict.pkl", 'rb') as f:
     symbol_to_ensembl = pickle.load(f)
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
-
 # paths to dcm weight matrices
-pt_attn_path = '/work/ccnr/GeneFormer/aggregated_matrices/aggregated_attentions/cardiomyopathy_failing/dilated/pretrained/max/'
-pt_embed_path = '/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/cardiomyopathy_failing/dilated/pretrained/max/'
-ft_embed_path = "/work/ccnr/GeneFormer/aggregated_matrices/aggregated_embeddings/cardiomyopathy_failing/dilated/fine_tuned/max/layer_4/"
-ft_attn_path = "/work/ccnr/GeneFormer/aggregated_matrices/aggregated_attentions/cardiomyopathy_failing/dilated/fine_tuned/max/layer_4/"
+pt_attn_path = './data/aggregated_attentions/cardiomyopathy_failing/dilated/pretrained/max/'
+pt_embed_path = './data/aggregated_matrices/aggregated_embeddings/dcm_samples/pretrained/max/'
+ft_embed_path = "./data/aggregated_matrices/aggregated_embeddings/dcm_samples/fine_tuned/max/layer_4/"
+ft_attn_path = "./data/aggregated_matrices/aggregated_attentions/dcm_samples/fine_tuned/max/layer_4/"
 
 ft_embed_counts = gf.load(ft_embed_path+"counts.pkl")
 ft_embed_vals = gf.load(ft_embed_path+"vals.pkl")

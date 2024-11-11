@@ -7,11 +7,16 @@ import seaborn as sns
 
 sns.set(style="whitegrid",context="talk")
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
+path_to_figs = "path to figure output folder"
 
-nonfail_path = '/work/ccnr/GeneFormer/datasets/cardiomyopathy_nonfailing.dataset/'
-gc_path = '/work/ccnr/GeneFormer/Genecorpus-30M/genecorpus_30M_2048.dataset/'
-dcm_path = '/work/ccnr/GeneFormer/datasets/cardiomyopathy_failing_subsets/dcm_samples.dataset/'
+# fill in paths to your copy of the datasets here. Genecorpus will be downloaded when Geneformer is 
+# installed in the environment, and the other two datasets can be found at the dois below
+# dcm: 10.1038/s41586-022-04817-8
+# non failing: 10.1161/CIRCULATIONAHA.119.045401
+
+nonfail_path = ''
+gc_path = ''
+dcm_path = ''
 
 path_dict = {'DCM':dcm_path,'nonfailing':nonfail_path,'genecorpus':gc_path}
 

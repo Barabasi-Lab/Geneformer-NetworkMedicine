@@ -1,4 +1,4 @@
-search import pickle
+import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,20 +8,22 @@ from tqdm import tqdm
 
 import gf_tools as gf
 
-path_to_figs = "/work/ccnr/GeneFormer/aggregation_scripts/plotting_scripts/final_figure_scripts/out/"
+path_to_figs = "path to figure output folder"
 
-PPI = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/ppi_with_gf_tokens.csv')
+PPI = pd.read_csv('./supplemental_data/ppi.csv')
 ppi = nx.from_pandas_edgelist(PPI, source = 'ens1', target = 'ens2')
-with open("/work/ccnr/GeneFormer/conda_environment/geneformer/gene_name_id_dict.pkl", 'rb') as f:
-    symbol_to_ensembl = pickle.load(f)
 
-gda = pd.read_csv('/work/ccnr/GeneFormer/jjs_adventures/figure_3_dis_mods/other_data/GDA_Filtered_04042022.csv')
+gda = pd.read_csv('./supplemental_data/gda.csv')
+
+with open("./supplemental_data/gene_name_id_dict.pkl", 'rb') as f:
+    symbol_to_ensembl = pickle.load(f)
+    
 disease_genes = list(gda[gda['NewName'].str.contains("cardiomyopathy dilated")]['HGNC_Symbol'])
 disease_genes_filtered = [symbol_to_ensembl[gene] for gene in disease_genes if gene in symbol_to_ensembl.keys()]
 
-base_path = "/work/ccnr/GeneFormer/aggregated_matrices/"
-mat_paths = ["aggregated_attentions/cardiomyopathy_failing/dilated/fine_tuned/max/layer_4/","aggregated_attentions/cardiomyopathy_failing/dilated/pretrained/max/",
-"aggregated_embeddings/cardiomyopathy_failing/dilated/fine_tuned/max/layer_4/","aggregated_embeddings/cardiomyopathy_failing/dilated/pretrained/max/"]
+base_path = "./data/aggregated_matrices/"
+mat_paths = ["aggregated_attentions/dcm_samples/fine_tuned/max/layer_4/","aggregated_attentions/dcm_samples/pretrained/max/",
+"aggregated_embeddings/dcm_samples/fine_tuned/max/layer_4/","aggregated_embeddings/dcm_samples/pretrained/max/"]
 labels = ["fine-tuned attentions","pretrained attentions", "fine-tuned embeddings", "pretrained embeddings"]
 
 count_dict = {}
@@ -67,9 +69,9 @@ res_keys = list(ppis_dict.keys())
 all_results = {k:{'fpr':[],'tpr':[],'auroc':[],'precision':[],'recall':[],'auprc':[],'top_hits':[],'full_df':[]} for k in res_keys}
 
 seed = 0
-n_realizations = 1
-n_2 = 100
-for i in tqdm(range(n_2)):
+
+nn = 100
+for i in tqdm(range(nn)):
     seed+=1
     print(i)
     np.random.seed(seed)
@@ -102,13 +104,13 @@ for k in list(all_results.keys()):
     linetype = '-'
     tpr = np.mean(np.array(all_results[k]['tpr']),axis=0)
     fpr = np.mean(np.array(all_results[k]['fpr']),axis=0)
-    tpr_std = np.std(np.array(all_results[k]['tpr']),axis=0)/np.sqrt(20)
+    tpr_std = np.std(np.array(all_results[k]['tpr']),axis=0)/np.sqrt(nn)
     precision = np.mean(np.array(all_results[k]['precision']),axis=0)
     recall = np.mean(np.array(all_results[k]['recall']),axis=0)
-    precision_std = np.std(np.array(all_results[k]['precision']),axis=0)
-    recall_std = np.std(np.array(all_results[k]['recall']),axis=0)/np.sqrt(20)
+    precision_std = np.std(np.array(all_results[k]['precision']),axis=0)/np.sqrt(nn)
+    recall_std = np.std(np.array(all_results[k]['recall']),axis=0)/np.sqrt(nn)
     top_hits = np.mean(np.array(all_results[k]['top_hits']),axis=0)
-    top_hits_std = np.std(np.array(all_results[k]['top_hits']),axis=0)/np.sqrt(20)
+    top_hits_std = np.std(np.array(all_results[k]['top_hits']),axis=0)/np.sqrt(nn)
     truncated_x = [i for i in range(100)]
 
     axs[0,0].plot(fpr,tpr,linetype,label=k + ' AUROC = ' + str(round(np.mean(all_results[k]['auroc']),2)))
@@ -138,4 +140,4 @@ axs[1,1].set_xlabel('Top Candidates')
 axs[1,1].set_ylabel('Cumulative True Positives')
 
 fig.tight_layout()
-plt.savefig(f'{path_to_figs}figure_3.png',dpi=300,bbox_inches='tight')
+plt.savefig(path_to_figs+'figure_3.png',dpi=300,bbox_inches='tight')
